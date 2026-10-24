@@ -74,12 +74,14 @@ function programChrome(program) {
 const ATTACKER_CLASSES = new Set(["antipersonnelattacker", "antiprogramattacker"]);
 
 /** Build the program-chip view-models for a runner deck. */
-function programVMs(actor, part, session) {
+function programVMs(actor, part, session, opts = {}) {
   const deck = bridge.getDeck(actor);
   if (!deck) return [];
   const programs = bridge.installedPrograms(deck) || [];
   const rezzedMirror = part?.rezzed || {};
   const progState = session.progState || {};
+  const destroyed = session.destroyed || {};
+  const rezUsedIds = opts.rezUsedIds || {};
   return programs.map((p) => {
     const chrome = programChrome(p);
     const rezzed = !!p.system?.isRezzed;
@@ -93,6 +95,9 @@ function programVMs(actor, part, session) {
     const def = p.system?.def ?? 0;
     const ps = progState[`${part.pid}|${p.id}`] || null;
     const isDeployed = isBlackIce && ps?.mode === "deployed";
+    // Destroyed lockout (§10): a program destroyed (REZ→0) this run renders BROKEN
+    // and cannot be re-activated until the GM restores it / the owner disconnects.
+    const isDestroyed = !!destroyed[`${part.pid}|${p.id}`];
     // Class bucket for color coding + a localized class label (Task B).
     const classBucket = isBooster ? "booster" : isDefender ? "defender"
       : isBlackIce ? "blackice" : "attacker";
@@ -123,6 +128,11 @@ function programVMs(actor, part, session) {
       deployMode: isBlackIce ? (ps?.mode || "") : "",
       isDeployed,
       isTrap: isBlackIce && ps?.mode === "trap",
+      // Destroyed lockout (§10): render BROKEN, block activate.
+      destroyed: isDestroyed,
+      // Per-program rez limit (§9): THIS item's Activate dims + is blocked once
+      // it has been rezzed this turn (other programs unaffected).
+      rezUsed: !!rezUsedIds[p.id],
       // Auto-derez hint for attacker programs (they self-derez after a DMG roll).
       autoDerezHint: rezzed && isAttacker,
       // Tooltip: full name + class + REZ.
@@ -327,7 +337,8 @@ function buildRunnerVM(app, sel, session) {
     dim: (ab.key in avail) ? !avail[ab.key] : false,
   }));
   const nodes = controlledNodes(part, session, archs);
-  const programs = programVMs(actor, part, session);
+  const rezUsedIds = part.rezUsedIds || {};
+  const programs = programVMs(actor, part, session, { rezUsedIds });
   const target = targetPanel(session, game.user.id, app);
 
   return {
@@ -359,6 +370,15 @@ function buildRunnerVM(app, sel, session) {
     gmDamage: game.user.isGM
       ? { pid, name: actor.name, amount: Math.max(0, Number(app._lastDamage) || 0) }
       : null,
+    // GM-only left-zone HP control (item 5): show current HP + a set-HP input for
+    // the selected runner. Not shown to players.
+    gmHp: game.user.isGM
+      ? {
+          pid,
+          value: actor.system?.derivedStats?.hp?.value ?? 0,
+          max: actor.system?.derivedStats?.hp?.max ?? 0,
+        }
+      : null,
   };
 }
 
@@ -372,6 +392,11 @@ function defenseTestsFor(app, pid, actor) {
     actorId: actor.id,
     attackerName: d.attackerName,
     attackerTotal: d.attackerTotal,
+    // Program-defence prompt (item 2): the prompt label names the defending
+    // program and the roll uses the program's "def" execution.
+    isProgDefense: !!d.progDefense,
+    progName: d.progName || "",
+    programId: d.progDefense?.programId || "",
   }));
 }
 
@@ -607,6 +632,15 @@ export function activateListeners(app, html) {
     if (pid) mutate("runner.damage", { pid, amount });
   });
 
+  // GM-only: SET the selected runner's HP directly (item 5). Clamped GM-side.
+  html.find('[data-action="runner-set-hp"]').on("click", (ev) => {
+    const box = ev.currentTarget.closest(".crns-runner-hp");
+    const input = box?.querySelector('input[name="runnerhp"]');
+    const value = Math.max(0, Number(input?.value) || 0);
+    const pid = ev.currentTarget.dataset.pid;
+    if (pid) mutate("runner.setHp", { pid, value });
+  });
+
   // Clear my target (click the target readout / target-panel clear button).
   html.find('[data-action="clear-target"]').on("click", () => {
     const session = getWorld("session") || {};
@@ -641,15 +675,23 @@ export function activateListeners(app, html) {
     const { testId, pid } = el.dataset;
     const actor = game.actors?.get(el.dataset.actorId);
     if (!actor) return;
-    const roll = await bridge.rollInterface(actor, "defense", ev.originalEvent || ev);
-    if (!roll) return; // cancelled — leave the prompt pending.
     const entry = (app._pendingDefense || []).find((d) => d.id === testId);
+    // Program-defence prompt (item 2): roll the PROGRAM's "def" execution
+    // (Interface + program DEF + 1d10) — the standard cyberdeck program def roll,
+    // dialog + LUCK available — instead of the runner's Interface defence.
+    const programId = entry?.progDefense?.programId || "";
+    const roll = programId
+      ? await bridge.rollProgram(actor, programId, "def", ev.originalEvent || ev)
+      : await bridge.rollInterface(actor, "defense", ev.originalEvent || ev);
+    if (!roll) return; // cancelled — leave the prompt pending.
     notifyClients({
       kind: "defenseResult",
       pid,
       attackerName: entry?.attackerName || "",
       attackerTotal: entry?.attackerTotal || 0,
       defenseTotal: Number(roll.resultTotal) || 0,
+      // Program-defence (item 2): name the defending program on the GM's card.
+      defenderName: programId ? (entry?.progName || "") : "",
       // Attacker program (Requirement 3): the GM derezzes it on a miss.
       attackerProg: entry?.attackerProg || null,
     });
@@ -739,13 +781,23 @@ export function activateListeners(app, html) {
     const actor = game.actors?.get(actorId);
     if (!actor) return;
     const part = participantById(pid);
+
+    // Destroyed lockout (§10) — this program is broken; activation is blocked.
+    const session0 = getWorld("session") || {};
+    if ((session0.destroyed || {})[`${pid}|${programId}`]) {
+      ui.notifications.warn(loc("CRNS.Errors.ProgramDestroyed")); return;
+    }
+    // One rez per turn PER PROGRAM ITEM (§9) — the same item cannot be rezzed
+    // twice in one turn; other programs (incl. another copy) are unaffected.
+    if (part?.rezUsedIds?.[programId]) { ui.notifications.warn(loc("CRNS.Errors.AlreadyRezzed")); return; }
     if ((part?.actions?.value ?? 0) < 1) { ui.notifications.warn(loc("CRNS.Errors.NoActions")); return; }
 
     // Player Black-ICE deploy flow (SPEC §14.12): trap vs deployed.
     if (cls === "blackice") { await activateBlackIce(app, part, pid, actor, programId); return; }
 
     await mutate("run.spend", { pid, n: 1 });
-    await bridge.rezProgram(actor, programId);
+    const ok = await bridge.rezProgram(actor, programId);
+    if (ok) await mutate("run.markRez", { pid, programId }); // this item's rez used up this turn.
   });
 
   html.find('[data-action="program-deactivate"]').on("click", async (ev) => {
@@ -1047,6 +1099,7 @@ async function activateBlackIce(app, part, pid, actor, programId) {
   await mutate("run.spend", { pid, n: 1 });
   const ok = await bridge.rezProgram(actor, programId);
   if (!ok) return;
+  await mutate("run.markRez", { pid, programId }); // this item's rez used up this turn (§9).
   await mutate("run.setRezzed", { pid, programId, state: { rezzed: true } });
   const res = hasTarget
     ? await mutate("run.progDeploy", { pid, programId, mode: "deployed", targetRef })

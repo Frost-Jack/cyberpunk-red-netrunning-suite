@@ -104,6 +104,9 @@ export function getData(app) {
     runners: {
       collapsed: !!app.state.collapsedRight,
       rows,
+      // GM "Restore programs" affordance (§10): shown when any program is locked
+      // out (destroyed this run).
+      hasDestroyed: Object.keys(session.destroyed || {}).length > 0,
     },
   };
 }
@@ -115,6 +118,11 @@ export function activateListeners(app, html) {
   html.find('[data-action="runners-toggle"]').on("click", () => {
     app.state.collapsedRight = !app.state.collapsedRight;
     app.render(false);
+  });
+
+  // GM: lift the destroyed-program lockout for ALL runners (§10).
+  html.find('[data-action="runners-restore-programs"]').on("click", () => {
+    mutate("run.clearDestroyed", { pid: null });
   });
 
   const rowPid = (ev) => ev.currentTarget.closest("[data-pid]")?.dataset.pid;

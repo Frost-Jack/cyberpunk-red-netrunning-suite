@@ -545,12 +545,16 @@ body.crns-resizing { cursor: ns-resize !important; -webkit-user-select: none !im
 .crns-state-trap { color: var(--crns-warn); border-color: var(--crns-warn); }
 .crns-state-deployed { color: var(--crns-accent); border-style: dashed; border-color: var(--crns-accent); }
 .crns-state-auto { color: var(--crns-warn); border: none; padding: 0; }
+.crns-state-destroyed { color: var(--crns-warn); border-color: var(--crns-warn); text-shadow: 0 0 6px var(--crns-warn); letter-spacing: 1px; }
 
 .crns-prog-btns { display: inline-flex; gap: 3px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; margin-left: auto; }
 
 /* Rezzed rows: subtle glow + brighter. Derezzed (rez 0): dimmed. */
 .crns-prog-row.rezzed { box-shadow: 0 0 7px -2px var(--crns-glow); background: color-mix(in srgb, var(--crns-prog-color) 8%, var(--crns-glass)); }
 .crns-prog-row.derezzed { opacity: 0.5; filter: grayscale(0.4); }
+/* Destroyed (§10): broken — grayscale + dim, no interactive buttons. */
+.crns-prog-row.destroyed { opacity: 0.45; filter: grayscale(1); }
+.crns-prog-row.destroyed .crns-prog-code { color: var(--crns-warn); }
 
 /* ICE attachment / follow row (entity variant) */
 .crns-ice-attach { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; }
@@ -563,6 +567,8 @@ body.crns-resizing { cursor: ns-resize !important; -webkit-user-select: none !im
 .crns-rezmgmt-label { font-size: 11px; color: var(--crns-dim); text-transform: uppercase; }
 .crns-rezmgmt input { width: 56px; }
 .crns-runner-dmg { margin-top: 4px; }
+.crns-runner-hp { margin-top: 4px; }
+.crns-runner-hpval { color: var(--crns-accent); font-weight: 600; text-transform: none; }
 .crns-act-rez { display: flex; align-items: center; gap: 6px; }
 .crns-act-rez .crns-rez-bar { width: 90px; }
 
@@ -1143,6 +1149,92 @@ body.crns-resizing { cursor: ns-resize !important; -webkit-user-select: none !im
 }
 
 /* ============================================================ *
+ *  Reference/help overlay (SPEC §13 Item 1)                     *
+ * ============================================================ */
+/* The fa-circle-question button sits at the right end of the tabs row. */
+.crns-tabs { position: relative; }
+.crns-help-btn { margin-left: auto; flex: 0 0 auto; }
+
+/* In-app overlay (NOT a Foundry Dialog): a dimmed backdrop covering the whole
+ * suite window, toggled via the `open` class from help.js. */
+.crns-help-overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: none; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--crns-bg) 72%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  padding: 24px;
+}
+.crns-help-overlay.open { display: flex; }
+.crns-help-panel {
+  display: flex; flex-direction: column;
+  width: min(720px, 94%); max-height: 90%;
+  background: var(--crns-panel, var(--crns-bg));
+  border: 1px solid var(--crns-accent);
+  box-shadow: 0 0 22px -4px var(--crns-glow), inset 0 0 40px -30px var(--crns-accent);
+}
+.crns-help-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--crns-border);
+  background: var(--crns-glass);
+}
+.crns-help-title {
+  flex: 1 1 auto; font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 14px; letter-spacing: 0.5px; color: var(--crns-accent);
+  text-transform: uppercase;
+}
+.crns-help-title i { margin-right: 6px; }
+.crns-help-body { overflow-y: auto; padding: 10px 14px 16px; }
+.crns-help-sec {
+  margin: 14px 0 6px; padding-bottom: 3px;
+  border-bottom: 1px solid var(--crns-accent);
+  color: var(--crns-accent); font-size: 13px; letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.crns-help-sec:first-child { margin-top: 0; }
+.crns-help-sec i { margin-right: 6px; }
+.crns-help-subsec {
+  margin: 10px 0 5px; color: var(--crns-dim);
+  font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase;
+}
+.crns-help-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+.crns-help-entry {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--crns-border);
+  background: color-mix(in srgb, var(--crns-glass) 60%, transparent);
+}
+/* Highlight frame: the entry is relevant to the viewing player. */
+.crns-help-entry.framed {
+  border-color: var(--crns-accent);
+  box-shadow: 0 0 10px -2px var(--crns-glow), inset 0 0 0 1px var(--crns-accent);
+  background: color-mix(in srgb, var(--crns-accent) 10%, var(--crns-glass));
+}
+.crns-help-portrait {
+  width: 44px; height: 44px; object-fit: cover;
+  border: 1px solid var(--crns-border); flex: 0 0 auto;
+}
+.crns-help-code {
+  flex: 0 0 auto; width: 44px; text-align: center;
+  font-family: "JetBrains Mono", "Consolas", monospace; font-size: 15px;
+  font-weight: 700; color: var(--crns-accent);
+  text-shadow: 0 0 6px var(--crns-glow); align-self: center;
+}
+.crns-help-info { flex: 1 1 auto; min-width: 0; }
+.crns-help-name { font-size: 13px; font-weight: 600; color: var(--crns-text); }
+.crns-help-stats {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 2px 0 3px;
+  font-family: "JetBrains Mono", "Consolas", monospace; font-size: 10px;
+  color: var(--crns-dim);
+}
+.crns-help-stats span {
+  border: 1px solid var(--crns-border); padding: 0 4px; white-space: nowrap;
+}
+.crns-help-effect { font-size: 11px; line-height: 1.35; color: var(--crns-text); }
+
+/* ============================================================ *
  *  HARD OVERRIDE (keep LAST) — the CPR system ships `button`   *
  *  rules with higher specificity than plain class selectors;   *
  *  re-assert the critical visual props here so buttons render  *
@@ -1262,8 +1354,18 @@ body.crns-resizing { cursor: ns-resize !important; -webkit-user-select: none !im
 .crns-root .crns-tree-hdr-btns button,
 .crns-root .crns-tree-row-btns button,
 .crns-root .crns-runner-btns button,
+.crns-root .crns-help-head button,
 .crns-root .crns-zoom-overlay button {
   width: auto !important;
+  flex: 0 0 auto !important;
+}
+
+/* Help button + close keep the compact icon-btn look (HARD OVERRIDE). */
+.crns-root .crns-help-btn,
+.crns-root .crns-help-close {
+  width: auto !important;
+  min-width: 22px !important;
+  height: 22px !important;
   flex: 0 0 auto !important;
 }
 

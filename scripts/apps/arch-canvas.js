@@ -6,8 +6,23 @@
  * CSS `zoom`, so the screen↔local scale divisor is always 1. */
 
 import { MODULE_ID, FLOOR_ICONS, ENTITY_ICONS, loc, abbrFor } from "../constants.js";
-import { getWorld, mutate } from "../data.js";
+import { getWorld, mutate, isPlayerRunner } from "../data.js";
 import { getDeck, installedPrograms } from "../cpr-bridge.js";
+
+/** Spectator fog (SPEC §13): the deepest floor index any PLAYER runner on this
+ *  arch can currently see — MAX over them of (maxFloor, reveal[pid][archId],
+ *  floorIndex). -1 when no player runner is on the arch (nothing visible). */
+function playerRunnerVisibleMax(session, archId) {
+  let vis = -1;
+  const reveal = session.reveal || {};
+  for (const [pid, p] of Object.entries(session.participants || {})) {
+    if (p.archId !== archId || !isPlayerRunner(p)) continue;
+    const visited = Number(p.maxFloor) || 0;
+    const revealed = reveal[pid]?.[archId];
+    vis = Math.max(vis, visited, Number.isInteger(revealed) ? revealed : -1, Number(p.floorIndex) || 0);
+  }
+  return vis;
+}
 
 /* Floor width + gap must match the CSS so the "fit" camera can centre floor 0. */
 const ZOOM_MIN = 0.3;
@@ -87,17 +102,22 @@ export function getData(app) {
   const slid = session.slid || [];
   const progState = session.progState || {};
 
-  // Fog of war (SPEC §14.7): player runners see only visited floors + revealed
-  // range. GM and spectators see all floors. `visibleMax` = deepest visible index
-  // (-1 → all). A "???" stub renders after the last visible floor if more exist.
-  let visibleMax = lastIndex; // GM / spectator: everything.
+  // Fog of war (SPEC §14.7 + §13 spectators rework): player runners see only
+  // visited floors + revealed range; a SPECTATOR sees with the SAME fog as the
+  // player runner(s) in that arch (MAX over them of visited/revealed/floor). GM
+  // sees all floors. `visibleMax` = deepest visible index (-1 → all). A "???"
+  // stub renders after the last visible floor if more exist.
+  let visibleMax = lastIndex; // GM: everything.
   if (role === "runner" && !isGM) {
     const visited = Number(me?.maxFloor) || 0;
     const revealed = (session.reveal || {})[myRunnerPid]?.[archId];
     visibleMax = Math.max(visited, Number.isInteger(revealed) ? revealed : -1);
     visibleMax = Math.max(visibleMax, myFloor); // never hide the runner's own floor.
+  } else if (role === "spectator" && !isGM) {
+    // Union of every PLAYER runner's visibility on this arch.
+    visibleMax = playerRunnerVisibleMax(session, archId);
   }
-  const fogActive = role === "runner" && !isGM;
+  const fogActive = !isGM && (role === "runner" || role === "spectator");
   const runnersOnArch = isGM ? runnersOnArchList(session, archId) : [];
 
   const progFloors = session.progFloors || {};

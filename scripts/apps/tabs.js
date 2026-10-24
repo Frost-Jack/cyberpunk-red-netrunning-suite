@@ -4,16 +4,7 @@
  * Spectators: a plain switcher of runner-occupied archs when spectatorFreeMove. */
 
 import { MODULE_ID } from "../constants.js";
-import { getWorld, mutate, hasOp } from "../data.js";
-
-/* Arch ids that currently have a runner in them. */
-function occupiedArchIds(session) {
-  const ids = new Set();
-  for (const p of Object.values(session.participants || {})) {
-    if (p.kind === "runner" && p.archId) ids.add(p.archId);
-  }
-  return [...ids];
-}
+import { getWorld, mutate, hasOp, playerRunnerArchIds } from "../data.js";
 
 export function getData(app) {
   const session = getWorld("session") || {};
@@ -45,7 +36,9 @@ export function getData(app) {
   const spectatorCapable = allowSpectators && me?.kind !== "runner";
   const mayPick = freeMove || !(me?.archId);
   if (spectatorCapable && mayPick && hasOp("session.spectate")) {
-    const list = occupiedArchIds(session)
+    // Only archs holding a PLAYER-owned runner are spectatable (SPEC §13) —
+    // spectators watch players, not GM/NPC-run architectures.
+    const list = playerRunnerArchIds(session)
       .filter((id) => archs[id])
       .map((id) => ({ archId: id, name: archs[id].name, active: (me?.archId || "") === id }));
     if (list.length) return { tabsSpectator: { tabs: list } };

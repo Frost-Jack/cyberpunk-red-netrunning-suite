@@ -29,6 +29,7 @@ export const WORLD_OBJECTS = {
     attachments: [],   // [{archId, iceId|progKey, pid}] — ICE following a player's runner
     demonState: {},    // "<actorId>" -> { value, max }  — demon NET-action counter
     progState: {},     // "<pid>|<programId>" -> { mode:"trap"|"deployed", targetRef, floorIndex }
+    destroyed: {},     // "<pid>|<programId>" -> true  — programs destroyed (REZ→0) this run (locked out until GM restore / owner disconnect)
   },
 };
 
@@ -123,6 +124,25 @@ function ownsParticipant(part, userId) {
     if (user && !user.isGM && actor?.testUserPermission?.(user, "OWNER")) return true;
   }
   return false;
+}
+
+/** Is this a PLAYER-owned runner participant — a runner whose userId maps to a
+ *  non-GM active/inactive user? GM-added NPC runners (userId "") are excluded.
+ *  Used by the spectators rework (SPEC §13): only archs holding such a runner are
+ *  spectatable, and a spectator's fog is derived from these runners. */
+export function isPlayerRunner(part) {
+  if (!part || part.kind !== "runner" || !part.userId) return false;
+  const user = game.users?.get(part.userId);
+  return !!user && !user.isGM;
+}
+
+/** Arch ids that currently hold at least one PLAYER-owned runner (SPEC §13). */
+export function playerRunnerArchIds(session) {
+  const ids = new Set();
+  for (const p of Object.values(session?.participants || {})) {
+    if (p.archId && isPlayerRunner(p)) ids.add(p.archId);
+  }
+  return [...ids];
 }
 
 /** Recompute a runner participant's NET-action maximum from its Interface rank
@@ -303,6 +323,17 @@ function progActorIdsForPid(session, pid) {
   return out;
 }
 
+/** Reverse-lookup: the "<pid>|<programId>" key of the player Black-ICE program
+ *  whose backing prog-ICE actor is `actorId` (or null). Lets a plain ent.damage
+ *  on a deployed/trap BI's actor route into the shared destruction cleanup. */
+function progKeyForActorId(session, actorId) {
+  if (!actorId) return null;
+  for (const [key, st] of Object.entries(session.progState || {})) {
+    if (st?.actorId === actorId) return key;
+  }
+  return null;
+}
+
 /** Delete the backing prog-ICE actors for a participant (or a single program).
  *  Reads progState BEFORE the caller clears it, so call this first. GM-side. */
 async function deleteProgActors(session, pid, programId = null) {
@@ -341,6 +372,11 @@ async function autoDerezDestroyedProg(session, pid, programId) {
   if (part.rezzed) delete part.rezzed[programId];
   if (session.progFloors) delete session.progFloors[progKey];
   if (session.progState) delete session.progState[progKey];
+
+  // Lock the program out for the rest of the run (§10): it renders BROKEN and
+  // cannot be re-activated until the GM restores it or the owner disconnects.
+  session.destroyed = session.destroyed || {};
+  session.destroyed[progKey] = true;
 
   // Drop the reactions this BI provoked (pendingTests / attachments / slid).
   pruneProgBiSideEffects(session, actorId, progKey);
@@ -769,6 +805,23 @@ function clearProgFloors(session, pid) {
   return changed;
 }
 
+/** Clear a participant's destroyed-program lockout entries (§10). `pid` null
+ *  clears ALL of them (GM "restore programs" button). Returns true if changed. */
+function clearDestroyed(session, pid = null) {
+  const d = session.destroyed;
+  if (!d) return false;
+  let changed = false;
+  if (pid === null) {
+    if (Object.keys(d).length) { session.destroyed = {}; changed = true; }
+    return changed;
+  }
+  const prefix = `${pid}|`;
+  for (const key of Object.keys(d)) {
+    if (key.startsWith(prefix)) { delete d[key]; changed = true; }
+  }
+  return changed;
+}
+
 /** Remove an arch from the open-tabs list, fixing activeTab. */
 function closeArchTab(session, archId) {
   session.tabs = (session.tabs || []).filter((t) => t !== archId);
@@ -1167,6 +1220,8 @@ const OPS = {
       rezzed: prev.rezzed || {},
       // Fog-of-war baseline: deepest floor visited (reset to 0 on a fresh connect).
       maxFloor: connecting ? 0 : (prev.maxFloor || 0),
+      // One-rez-per-turn allowance (§9) — reset on a fresh connect.
+      rezUsedIds: connecting ? {} : (prev.rezUsedIds || {}),
     };
     session.participants[pid] = part;
     // Connecting places the runner on floor 0 — provoke any Black ICE there.
@@ -1194,11 +1249,12 @@ const OPS = {
       const curArch = cur?.archId || "";
       // May move freely, or may join/leave only from an unset arch.
       if (!freeMove && curArch !== "") return false;
-      // Target arch must currently hold at least one runner (self-service only).
+      // Target arch must currently hold at least one PLAYER-owned runner
+      // (self-service only) — spectating follows players, not GM/NPC runners.
       if (archId) {
-        const hasRunner = Object.values(session.participants)
-          .some((p) => p.kind === "runner" && p.archId === archId);
-        if (!hasRunner) return false;
+        const hasPlayer = Object.values(session.participants)
+          .some((p) => p.archId === archId && isPlayerRunner(p));
+        if (!hasPlayer) return false;
       }
     }
 
@@ -1228,6 +1284,7 @@ const OPS = {
       await deleteProgActors(session, pid); // delete backing prog-ICE actors first.
       clearProgFloors(session, pid);
       clearProgState(session, pid);
+      clearDestroyed(session, pid); // end of the run → the lockout is lifted (§10).
       prunePendingTests(session, (t) => t.pid === pid);
       // Drop this runner's ICE attachments (SPEC §14.11).
       pruneAttachments(session, (a) => a.pid === pid);
@@ -1338,12 +1395,25 @@ const OPS = {
     const rez = targetActor?.system?.stats?.rez?.value ?? 1;
     if (rez <= 0) {
       postDestroyedCard(targetName);
-      // Derezzed ICE can no longer act: drop pending SPEED tests pointing at it
-      // and any attachments it held.
-      let changed = prunePendingTests(session, (t) => t.iceActorId === actorId);
-      const iceIds = iceDefIdsForActor(actorId);
-      if (iceIds.size && pruneAttachments(session, (a) => iceIds.has(a.iceId))) changed = true;
-      if (changed) await setWorld("session", session);
+      // If the damaged actor backs a PLAYER Black-ICE program (deployed/trap BI),
+      // run the same destruction cleanup a run.progDamage kill would — derez the
+      // program item, delete the actor, lock it out (§10), prune reactions — so a
+      // GM killing it from the entity panel breaks it reliably too.
+      const progKey = progKeyForActorId(session, actorId);
+      if (progKey) {
+        const cut = progKey.lastIndexOf("|");
+        const pKpid = progKey.slice(0, cut);
+        const pKprog = progKey.slice(cut + 1);
+        await autoDerezDestroyedProg(session, pKpid, pKprog);
+        await setWorld("session", session);
+      } else {
+        // Derezzed arch ICE can no longer act: drop pending SPEED tests pointing
+        // at it and any attachments it held.
+        let changed = prunePendingTests(session, (t) => t.iceActorId === actorId);
+        const iceIds = iceDefIdsForActor(actorId);
+        if (iceIds.size && pruneAttachments(session, (a) => iceIds.has(a.iceId))) changed = true;
+        if (changed) await setWorld("session", session);
+      }
     }
     return ok;
   },
@@ -1474,6 +1544,7 @@ const OPS = {
     actions.value = Math.max(0, (actions.value || 0) - 1);
     part.actions = actions;
     part.jackedIn = !!jackIn;
+    part.rezUsedIds = {}; // jack in/out resets the per-program rez allowance (§9).
     if (!jackIn) {
       part.rezzed = {}; // Clear the rezzed mirror on jack-out.
       await deleteProgActors(session, pid); // delete backing prog-ICE actors first.
@@ -1527,6 +1598,7 @@ const OPS = {
 
     const max = participantActionMax(part);
     part.actions = { value: max, max };
+    part.rezUsedIds = {}; // fresh turn → the per-program rez allowance resets (§9).
     await setWorld("session", session);
     return true;
   },
@@ -1541,8 +1613,33 @@ const OPS = {
       if (archId && part.archId !== archId) continue;
       const max = participantActionMax(part);
       part.actions = { value: max, max };
+      part.rezUsedIds = {}; // fresh turn → reset the per-program rez allowance (§9).
     }
     await setWorld("session", session);
+    return true;
+  },
+
+  /** Mark that a SPECIFIC program was rezzed this turn (§9 — the limit is per
+   *  PROGRAM ITEM: the same item cannot be rezzed twice in one turn, but other
+   *  copies/programs may). owner-or-GM. Called after a successful rez. */
+  async "run.markRez"({ pid, programId = "" } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const parts = session.participants || {};
+    const part = parts[pid];
+    if (!part || part.kind !== "runner" || !programId) return false;
+    if (!requesterIsGM(callerId) && !ownsParticipant(part, callerId)) return false;
+    part.rezUsedIds = part.rezUsedIds || {};
+    part.rezUsedIds[programId] = true;
+    await setWorld("session", session);
+    return true;
+  },
+
+  /** GM: lift the destroyed-program lockout (§10). `pid` null clears ALL runners'
+   *  destroyed entries ("Restore programs"); otherwise just that runner's. */
+  async "run.clearDestroyed"({ pid = null } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    if (clearDestroyed(session, pid)) await setWorld("session", session);
     return true;
   },
 
@@ -1671,6 +1768,18 @@ const OPS = {
     return ok;
   },
 
+  /** GM-only: set a netrunner's current HP directly (clamp 0..max). Task item 5:
+   *  GM HP control for a selected runner in the acts-as left zone. */
+  async "runner.setHp"({ pid, value } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    const part = (session.participants || {})[pid];
+    if (!part || part.kind !== "runner" || !part.actorUuid) return false;
+    const actor = fromUuidSync?.(part.actorUuid) ?? null;
+    if (!actor) return false;
+    return bridge.setRunnerHp(actor.id, value);
+  },
+
   /* ---- Round-2: interface-ability results (SPEC §14.7) ---- */
 
   /** Resolve an interface-ability roll's effect on the floor state. The DV is
@@ -1756,16 +1865,26 @@ const OPS = {
       case "pathfinder": {
         // Reveal walking DEEPER from the current floor: up to `total` floors,
         // stopping INCLUSIVE at the first un-breached password floor with dv > total.
+        // The CURRENT floor is considered FIRST: if the runner is standing ON an
+        // un-breached password floor the runner cannot beat (dv > total), reveal
+        // NOTHING deeper (revealMax = the current index).
         const start = part.floorIndex || 0;
         let maxIndex = start;
-        const limit = Math.min(floors.length - 1, start + Math.max(0, t));
-        for (let i = start + 1; i <= limit; i += 1) {
-          const f = floors[i];
-          maxIndex = i;
-          if (f.kind === "password") {
-            const ffx = (session.floorState || {})[floorKey(part.archId, f.id)];
-            const breached = !!(ffx && ffx.breached);
-            if (!breached && (Number(f.dv) || 0) > t) break; // inclusive stop.
+        const isBlocking = (f) => {
+          if (f.kind !== "password") return false;
+          const ffx = (session.floorState || {})[floorKey(part.archId, f.id)];
+          const breached = !!(ffx && ffx.breached);
+          return !breached && (Number(f.dv) || 0) > t;
+        };
+        if (isBlocking(floors[start])) {
+          // Standing on an un-breached password floor beyond reach — stop here.
+          maxIndex = start;
+        } else {
+          const limit = Math.min(floors.length - 1, start + Math.max(0, t));
+          for (let i = start + 1; i <= limit; i += 1) {
+            const f = floors[i];
+            maxIndex = i;
+            if (isBlocking(f)) break; // inclusive stop.
           }
         }
         session.reveal = session.reveal || {};

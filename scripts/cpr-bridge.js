@@ -530,6 +530,18 @@ export async function damageRunnerHp(actorId, amount) {
   } catch (e) { sysError(e); return false; }
 }
 
+/** Set (and clamp 0..max) a netrunner actor's current HP. GM-side only. */
+export async function setRunnerHp(actorId, value) {
+  try {
+    const actor = game.actors?.get(actorId);
+    if (!actor) return false;
+    const max = actor.system?.derivedStats?.hp?.max ?? 0;
+    const next = Math.max(0, Math.min(max, Number(value) || 0));
+    await actor.update({ "system.derivedStats.hp.value": next });
+    return true;
+  } catch (e) { sysError(e); return false; }
+}
+
 /** Apply damage to an entity actor's REZ. GM-side only (called from OPS). */
 export async function damageEntity(actorId, amount) {
   try {

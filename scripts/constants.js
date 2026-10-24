@@ -85,6 +85,33 @@ export const PROGRAM_ABBR = {
   "vrizzbolt": "VRZ",
 };
 
+/* ------------------------------------------------------------------ */
+/* Program reference data (Cyberpunk RED core) — keyed by lowercased    */
+/* name. Stats {atk, def, rez}; effect + name come from lang            */
+/* (CRNS.Program.<Key>.{name,effect}). Grouped by class for the help    */
+/* overlay (SPEC §13 Item 1). `key` is the lang sub-key (PascalCase-ish  */
+/* stable id); `group` ∈ booster|defender|attacker.                     */
+export const PROGRAM_INFO = {
+  // Boosters — ATK 0 / DEF 0 / REZ 7.
+  "eraser":           { key: "Eraser",          group: "booster",  atk: 0, def: 0, rez: 7 },
+  "see ya":           { key: "SeeYa",           group: "booster",  atk: 0, def: 0, rez: 7 },
+  "speedy gonzalvez": { key: "SpeedyGonzalvez", group: "booster",  atk: 0, def: 0, rez: 7 },
+  "worm":             { key: "Worm",            group: "booster",  atk: 0, def: 0, rez: 7 },
+  // Defenders — ATK 0 / DEF 0 / REZ 7 (one copy each, single-use per netrun).
+  "armor":            { key: "Armor",           group: "defender", atk: 0, def: 0, rez: 7 },
+  "flak":             { key: "Flak",            group: "defender", atk: 0, def: 0, rez: 7 },
+  "shield":           { key: "Shield",          group: "defender", atk: 0, def: 0, rez: 7 },
+  // Attackers — REZ 0.
+  "banhammer":        { key: "Banhammer",       group: "attacker", atk: 1, def: 0, rez: 0 },
+  "sword":            { key: "Sword",           group: "attacker", atk: 1, def: 0, rez: 0 },
+  "deck krash":       { key: "DeckKrash",       group: "attacker", atk: 0, def: 0, rez: 0 },
+  "hellbolt":         { key: "Hellbolt",        group: "attacker", atk: 2, def: 0, rez: 0 },
+  "nervescrub":       { key: "Nervescrub",      group: "attacker", atk: 0, def: 0, rez: 0 },
+  "poison flatline":  { key: "PoisonFlatline",  group: "attacker", atk: 0, def: 0, rez: 0 },
+  "superglue":        { key: "Superglue",       group: "attacker", atk: 2, def: 0, rez: 0 },
+  "vrizzbolt":        { key: "Vrizzbolt",       group: "attacker", atk: 1, def: 0, rez: 0 },
+};
+
 /** A 3-letter code for a program by name: the PROGRAM_ABBR map when known, else
  *  a fallback — uppercase the name, keep the first char, strip vowels after it,
  *  and take the first 3 chars. Empty name → "???". */

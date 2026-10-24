@@ -13,8 +13,9 @@ import * as Editor from "./editor.js";
 import * as Canvas from "./arch-canvas.js";
 import * as Runners from "./runners.js";
 import * as Actions from "./actions.js";
+import * as Help from "./help.js";
 
-const SUBMODULES = [Tree, Tabs, Editor, Canvas, Runners, Actions];
+const SUBMODULES = [Tree, Tabs, Editor, Canvas, Runners, Actions, Help];
 
 /** Small modal prompting for a single line of text. Resolves to the trimmed
  *  string, or null if cancelled/empty. Shared helper for rename/create dialogs. */

@@ -5,7 +5,7 @@ import { MODULE_ID, TPL, THEMES, loc, esc, BLACK_ICE, blackIceTypeForName } from
 import { WORLD_OBJECTS, getWorld, setWorld, isPrimaryGM, mutate, hasOp, notifyClients } from "./data.js";
 import { initSocket } from "./socket.js";
 import * as bridge from "./cpr-bridge.js";
-import { eligibleNetrunner, userNetrunnerActor } from "./cpr-bridge.js";
+import { eligibleNetrunner } from "./cpr-bridge.js";
 import NetrunningSuiteApp from "./apps/suite-app.js";
 
 /* ------------------------------------------------------------------ */
@@ -56,7 +56,7 @@ Hooks.once("ready", async () => {
   globalThis.CRNS = { ui: new NetrunningSuiteApp() };
 
   await loadTemplates([
-    "shell", "tree", "tabs", "arch-canvas", "editor", "runners", "actions", "actions-damagebox", "actions-target", "entity-card",
+    "shell", "tree", "tabs", "arch-canvas", "editor", "runners", "actions", "actions-damagebox", "actions-target", "entity-card", "help",
   ].map(TPL));
 
   patchSortCombatants();
@@ -138,9 +138,10 @@ Hooks.on("getSceneControlButtons", (controls) => {
     name: "crns",
     title: loc("CRNS.Button.Open"),
     icon: "fas fa-microchip",
-    visible: game.user.isGM
-      || !!userNetrunnerActor(game.user)
-      || game.settings.get(MODULE_ID, "allowSpectators"),
+    // The toolbar button is now visible to EVERYONE (SPEC §13 spectators rework):
+    // the tab strip / spectator switcher is the in-app entry point. The JOIN is
+    // still gated by allowSpectators server-side; only the button is unconditional.
+    visible: true,
     onClick: () => globalThis.CRNS?.ui?.render(true),
     button: true,
   });
@@ -270,6 +271,11 @@ function handleDefenseRequest(data) {
     pid: data.pid,
     attackerName: data.attackerName || "",
     attackerTotal: Number(data.total) || 0,
+    // Program-defence marker (item 2): when present the owner rolls the program's
+    // own "def" execution (Interface + program DEF + 1d10) instead of Interface
+    // defence, and the prompt names the defending program.
+    progDefense: data.progDefense || null,
+    progName: data.progName || "",
     // Carry the attacker program so the defence reply can trigger miss auto-derez.
     attackerProg: data.attackerProg || null,
   });
@@ -423,8 +429,58 @@ function runnerIsPlayerControlled(pid) {
   return !!user && !user.isGM;
 }
 
+/** Parse a "prog:<pid>:<programId>" ref → { pid, programId } (pid may contain ":"). */
+function parseProgRef(ref) {
+  const rest = (ref || "").slice("prog:".length);
+  const cut = rest.lastIndexOf(":");
+  if (cut < 0) return null;
+  return { pid: rest.slice(0, cut), programId: rest.slice(cut + 1) };
+}
+
 async function handleRollRequest(data) {
   const auto = game.settings.get(MODULE_ID, "autoRollNPC");
+
+  // Program target (item 2): the attack targets a runner's rezzed program. The
+  // program itself DEFENDS — Interface + program DEF + 1d10 (the system's
+  // cyberdeck program "def" roll). If the owning runner is player-controlled,
+  // prompt THAT player to roll it (standard dialog, LUCK available); otherwise
+  // the GM auto-rolls it GM-side. This must NOT use the backing-actor "def" stat.
+  if ((data.targetRef || "").startsWith("prog:")) {
+    const parsed = parseProgRef(data.targetRef);
+    if (!parsed) return;
+    const { pid, programId } = parsed;
+    const part = (getWorld("session") || {}).participants?.[pid];
+    const owner = part?.actorUuid ? (fromUuidSync?.(part.actorUuid) ?? null) : null;
+    if (!owner) return;
+
+    // Player-owned → prompt the owning player to roll the program's defence.
+    if (runnerIsPlayerControlled(pid)) {
+      notifyClients({
+        kind: "defenseRequest",
+        pid,
+        attackerName: data.attackerName || "",
+        total: Number(data.total) || 0,
+        // Program-defence marker: the owner rolls bridge.rollProgram(..,"def").
+        progDefense: { programId },
+        progName: owner.getOwnedItem?.(programId)?.name || "",
+        attackerProg: data.attackerProg || null,
+      });
+      return;
+    }
+
+    // GM/NPC-owned program → auto-roll its defence GM-side (unless auto is off).
+    if (!auto) {
+      ui.notifications.info(loc("CRNS.Actions.AutoRollPrompt", { attacker: data.attackerName, target: owner.name }));
+      return;
+    }
+    const roll = await bridge.rollProgram(owner, programId, "def");
+    const defenderTotal = Number(roll?.resultTotal) || 0;
+    const progName = owner.getOwnedItem?.(programId)?.name || owner.name;
+    postComparisonCard(data.attackerName, Number(data.total) || 0, progName, defenderTotal);
+    if ((Number(data.total) || 0) <= defenderTotal) await derezAttackerProg(data.attackerProg);
+    return;
+  }
+
   const resolved = refToActor(data.targetRef);
   if (!resolved?.actor) return;
   const { kind, actor } = resolved;
@@ -464,10 +520,6 @@ async function handleRollRequest(data) {
   } else if (kind === "runner") {
     // GM-controlled runner (userId "") — auto-roll GM-side.
     const roll = await bridge.rollInterface(actor, "defense");
-    defenderTotal = Number(roll?.resultTotal) || 0;
-  } else if (kind === "prog") {
-    // A player's rezzed Black ICE defends with its DEF stat (backing actor).
-    const roll = await bridge.rollEntityStat(actor, "def");
     defenderTotal = Number(roll?.resultTotal) || 0;
   }
 
@@ -510,7 +562,8 @@ async function derezAttackerProg(attackerProg) {
 async function handleDefenseResult(data) {
   const part = (getWorld("session") || {}).participants?.[data.pid];
   const actor = part?.actorUuid ? (fromUuidSync?.(part.actorUuid) ?? null) : null;
-  const name = actor?.name || loc("CRNS.Runners.NPC");
+  // Program defence (item 2): name the defending program; else the runner.
+  const name = data.defenderName || actor?.name || loc("CRNS.Runners.NPC");
   const atk = Number(data.attackerTotal) || 0;
   const def = Number(data.defenseTotal) || 0;
   postComparisonCard(data.attackerName || "", atk, name, def);

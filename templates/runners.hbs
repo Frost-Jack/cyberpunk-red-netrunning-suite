@@ -10,6 +10,11 @@
 <div class="crns-runners">
   <div class="crns-runners-head">
     <span class="crns-runners-title">{{localize "CRNS.Runners.Title"}}</span>
+    {{#if runners.hasDestroyed}}
+    <button type="button" class="crns-icon-btn" data-action="runners-restore-programs" title="{{localize "CRNS.Runners.RestorePrograms"}}">
+      <i class="fas fa-wrench"></i>
+    </button>
+    {{/if}}
     <button type="button" class="crns-icon-btn" data-action="runners-toggle" title="{{localize "CRNS.Runners.Collapse"}}">
       <i class="fas fa-angles-right"></i>
     </button>

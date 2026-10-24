@@ -2,7 +2,7 @@
   "id": "cyberpunk-red-netrunning-suite",
   "title": "Cyberpunk RED — Netrunning Suite",
   "description": "Immersive NET architecture builder and netrunning interface for Cyberpunk RED.",
-  "version": "1.0",
+  "version": "1.1",
   "compatibility": { "minimum": "12", "verified": "12" },
   "authors": [{ "name": "Lumiel" }],
   "socket": true,

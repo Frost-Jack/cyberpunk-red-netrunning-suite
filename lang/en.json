@@ -100,7 +100,8 @@
       "NPC": "NPC",
       "Position": "{arch} · floor {floor}",
       "NoActiveTab": "Activate an architecture tab first.",
-      "NotEligible": "That actor has no equipped cyberdeck — it cannot netrun."
+      "NotEligible": "That actor has no equipped cyberdeck — it cannot netrun.",
+      "RestorePrograms": "Restore destroyed programs"
     },
     "Settings": {
       "AllowSpectators": "Allow spectators",
@@ -136,7 +137,9 @@
       "PasswordBlocked": "You cannot move deeper past an un-breached password floor.",
       "NoTarget": "Pick a target first.",
       "TrapDerezFloor": "You must stand on the trap's floor to derez it.",
-      "NoControlledNode": "You do not control any node."
+      "NoControlledNode": "You do not control any node.",
+      "AlreadyRezzed": "This program has already been rezzed this turn.",
+      "ProgramDestroyed": "This program was destroyed and cannot be activated until the GM restores it."
     },
     "Hints": {
       "FreeRoll": "Hold Shift to roll without spending a NET action (e.g. defending against an attack)."
@@ -211,6 +214,7 @@
       "AttachmentNone": "—",
       "AttachmentTo": "Attached to: {name}",
       "DefensePrompt": "DEFENSE",
+      "ProgDefensePrompt": "PROGRAM DEFENSE «{name}»",
       "DefenseRoll": "Defend",
       "ResizeHint": "Drag to resize the action bar. Double-click to reset.",
       "DisconnectConfirmTitle": "Disconnect runner?",
@@ -218,6 +222,8 @@
       "StateRezzed": "Rezzed",
       "StateTrap": "Trap",
       "StateDeployed": "Deployed",
+      "StateDestroyed": "DESTROYED",
+      "SetHp": "Set HP",
       "AutoDerezHint": "Attacker programs deactivate automatically after a damage roll.",
       "PipToggle": "Click: spend a filled pip / restore an empty one"
     },
@@ -318,6 +324,91 @@
       "balron": {
         "name": "Balron"
       }
+    },
+    "Program": {
+      "Eraser": {
+        "name": "Eraser",
+        "effect": "+2 on Cloak checks."
+      },
+      "SeeYa": {
+        "name": "See Ya",
+        "effect": "+2 on Pathfinder checks."
+      },
+      "SpeedyGonzalvez": {
+        "name": "Speedy Gonzalvez",
+        "effect": "Increases your Speed by +2."
+      },
+      "Worm": {
+        "name": "Worm",
+        "effect": "+2 on Backdoor checks."
+      },
+      "Armor": {
+        "name": "Armor",
+        "effect": "Lowers any brain damage you would receive by 4."
+      },
+      "Flak": {
+        "name": "Flak",
+        "effect": "Reduces the ATK of non-Black ICE programs to 0."
+      },
+      "Shield": {
+        "name": "Shield",
+        "effect": "Automatically derezzed to stop you from taking brain damage from one non-Black ICE program."
+      },
+      "Banhammer": {
+        "name": "Banhammer",
+        "effect": "2d6 damage to a Black ICE program, or 3d6 to a non-Black ICE program."
+      },
+      "Sword": {
+        "name": "Sword",
+        "effect": "3d6 damage to a Black ICE program, or 2d6 to a non-Black ICE program."
+      },
+      "DeckKrash": {
+        "name": "Deck KRASH",
+        "effect": "Target netrunner is forcibly and unsafely jacked out."
+      },
+      "Hellbolt": {
+        "name": "Hellbolt",
+        "effect": "2d6 damage directly to the brain; unless insulated the cyberdeck catches fire — 2 HP per turn until extinguished with a meat action (does not stack)."
+      },
+      "Nervescrub": {
+        "name": "Nervescrub",
+        "effect": "Target's INT, REF and DEX lowered by 1d6 (min 1), psychosomatic, wears off in an hour."
+      },
+      "PoisonFlatline": {
+        "name": "Poison Flatline",
+        "effect": "Destroys a single random non-Black ICE program on the target's cyberdeck."
+      },
+      "Superglue": {
+        "name": "Superglue",
+        "effect": "Target cannot go deeper or jack out safely for 1d6 rounds (unsafe jack-out allowed); each copy rezzes once per netrun."
+      },
+      "Vrizzbolt": {
+        "name": "Vrizzbolt",
+        "effect": "1d6 direct brain damage and -1 NET action next turn (min 2)."
+      }
+    },
+    "Help": {
+      "Open": "Reference",
+      "Title": "Netrunning Reference",
+      "Close": "Close",
+      "BlackIce": "Black ICE",
+      "AntiNetrunner": "Anti-Netrunner",
+      "AntiProgram": "Anti-Program",
+      "Programs": "Programs",
+      "Boosters": "Boosters",
+      "Defenders": "Defenders",
+      "Attackers": "Attackers",
+      "Demons": "Demons",
+      "StatPer": "PER",
+      "StatSpd": "SPD",
+      "StatAtk": "ATK",
+      "StatDef": "DEF",
+      "StatRez": "REZ",
+      "StatInt": "Interface",
+      "StatNa": "NA",
+      "StatCn": "CN",
+      "FrameIce": "appears in the current architecture",
+      "FrameProgram": "installed in your cyberdeck"
     }
   }
 }
