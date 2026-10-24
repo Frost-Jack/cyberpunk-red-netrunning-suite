@@ -1,12 +1,13 @@
-/* Architecture editor (floor chain editing). Phase B.
+/* Architecture editor (floor tree editing). Phase B.
  * Operates on a local DRAFT (app.state.draft) — a deep clone of the arch taken
  * when the editor opens. All edits mutate the draft and re-render locally; the
  * explicit Save button commits via arch.update (which reconciles actors);
  * Cancel/close discards. GM only, shown when state.editorArchId is a tab-open
  * arch. */
 
-import { loc, uid, BLACK_ICE, DEMONS, FLOOR_KINDS, FLOOR_ICONS, ENTITY_ICONS, MAX_ICE_PER_FLOOR, maxDemons } from "../constants.js";
+import { loc, uid, esc, BLACK_ICE, DEMONS, FLOOR_KINDS, FLOOR_ICONS, ENTITY_ICONS, MAX_ICE_PER_FLOOR, maxDemons } from "../constants.js";
 import { getWorld, mutate } from "../data.js";
+import { topology } from "../topology.js";
 
 const ICE_TYPES = Object.keys(BLACK_ICE);
 const DEMON_TYPES = Object.keys(DEMONS);
@@ -43,20 +44,25 @@ export function getData(app) {
 
   const stored = (getWorld("netArchs") || {})[draft.id];
   const dirty = JSON.stringify(stored) !== JSON.stringify(draft);
+  const library = getWorld("customContent") || {};
+  const custom = (def) => def?.content || library[String(def?.type || "").slice(7)];
 
   const kinds = FLOOR_KINDS.map((k) => ({ id: k, label: loc(`CRNS.Floor.${k}`) }));
+  const graph = topology(draft);
 
   const floors = (draft.floors || []).map((f, idx) => {
     const iceSlots = [];
     for (let s = 0; s < MAX_ICE_PER_FLOOR; s++) {
       const def = f.ice?.[s] ?? null;
       iceSlots.push(def
-        ? { filled: true, uid: def.id, type: def.type, name: loc(`${BLACK_ICE[def.type].effectKey}.name`), img: ENTITY_ICONS[def.type] }
+        ? { filled: true, uid: def.id, type: def.type, name: BLACK_ICE[def.type] ? loc(`${BLACK_ICE[def.type].effectKey}.name`) : custom(def)?.name || def.type, img: ENTITY_ICONS[def.type] || custom(def)?.img }
         : { filled: false });
     }
     const demon = f.demon
-      ? { uid: f.demon.id, type: f.demon.type, name: loc(`CRNS.Demon.${f.demon.type}.name`), img: ENTITY_ICONS[f.demon.type] }
+      ? { uid: f.demon.id, type: f.demon.type, name: custom(f.demon)?.name || loc(`CRNS.Demon.${f.demon.type}.name`), img: custom(f.demon)?.img || ENTITY_ICONS[f.demon.type] }
       : null;
+    const descendants = new Set([idx]);
+    for (const i of descendants) for (const child of graph.children[i]) descendants.add(child);
     return {
       id: f.id,
       index: idx,
@@ -72,6 +78,12 @@ export function getData(app) {
       isFirst: idx === 0,
       isLast: idx === floorCount - 1,
       canDelete: floorCount > 1,
+      canBranch: graph.depths[idx] >= 1,
+      isEntry: graph.parents[idx] === null,
+      parentOptions: (draft.floors || []).flatMap((candidate, i) => {
+        if (descendants.has(i)) return [];
+        return [{ id: candidate.id, number: i + 1, selected: graph.parents[idx] === i }];
+      }),
     };
   });
 
@@ -83,6 +95,10 @@ export function getData(app) {
     type: t, name: loc(`CRNS.Demon.${t}.name`), img: ENTITY_ICONS[t],
     rez: DEMONS[t].rez, iface: DEMONS[t].interface, actions: DEMONS[t].actions, cn: DEMONS[t].combatNumber,
   }));
+  for (const def of Object.values(library)) {
+    if (def.kind === "blackIce") icePicker.push({ type: `custom_${def.id}`, name: def.name, img: def.img, ...def.stats });
+    if (def.kind === "demon") demonPicker.push({ type: `custom_${def.id}`, name: def.name, img: def.img, rez: def.stats.rez, iface: def.stats.interface, actions: def.stats.actions, cn: def.stats.combatNumber });
+  }
 
   return {
     editor: {
@@ -94,6 +110,7 @@ export function getData(app) {
       demonMax,
       demonBudgetFull: demons >= demonMax,
       dirty,
+      topologyError: graph.error,
       kinds,
       icePicker,
       demonPicker,
@@ -106,6 +123,14 @@ function floorAt(app, floorId) {
   return (app.state.draft?.floors || []).find((f) => f.id === floorId) ?? null;
 }
 function reRender(app) { app.render(false); }
+
+/* Freeze implicit linear links before changing display order or topology. */
+function explicitLinks(draft) {
+  const graph = topology(draft);
+  draft.floors.forEach((f, i) => {
+    if (!Object.hasOwn(f, "parentId")) f.parentId = graph.parents[i] === null ? "" : draft.floors[graph.parents[i]].id;
+  });
+}
 
 export function activateListeners(app, html) {
   if (!game.user.isGM) return;
@@ -120,6 +145,8 @@ export function activateListeners(app, html) {
     reRender(app);
   });
   html.find('[data-action="editor-save"]').on("click", async () => {
+    const error = topology(draft).error;
+    if (error) { ui.notifications.warn(loc(error)); return; }
     const result = await mutate("arch.update", { archId: draft.id, arch: draft });
     if (result && typeof result === "object" && result.error) {
       ui.notifications.warn(loc(result.error));
@@ -155,23 +182,48 @@ export function activateListeners(app, html) {
 
   /* ---- floor structure ---- */
   const floorIndex = (floorId) => (app.state.draft?.floors || []).findIndex((f) => f.id === floorId);
+  html.find('[data-action="floor-parent"]').on("change", (ev) => {
+    const f = floorAt(app, ev.currentTarget.closest("[data-floor-id]")?.dataset.floorId);
+    if (!f) return;
+    explicitLinks(draft);
+    const previous = f.parentId;
+    f.parentId = ev.currentTarget.value;
+    const error = topology(draft).error;
+    // Equal bottoms are allowed while drafting; Save requires a unique bottom.
+    if (error && error !== "CRNS.Errors.AmbiguousRoot") {
+      f.parentId = previous;
+      ui.notifications.warn(loc(error));
+    }
+    reRender(app);
+  });
   html.find('[data-action="floor-up"]').on("click", (ev) => {
     const id = ev.currentTarget.closest("[data-floor-id]")?.dataset.floorId;
     const i = floorIndex(id);
     const floors = app.state.draft.floors;
-    if (i > 0) { [floors[i - 1], floors[i]] = [floors[i], floors[i - 1]]; reRender(app); }
+    if (i > 0) { explicitLinks(draft); [floors[i - 1], floors[i]] = [floors[i], floors[i - 1]]; reRender(app); }
   });
   html.find('[data-action="floor-down"]').on("click", (ev) => {
     const id = ev.currentTarget.closest("[data-floor-id]")?.dataset.floorId;
     const i = floorIndex(id);
     const floors = app.state.draft.floors;
-    if (i >= 0 && i < floors.length - 1) { [floors[i + 1], floors[i]] = [floors[i], floors[i + 1]]; reRender(app); }
+    if (i >= 0 && i < floors.length - 1) { explicitLinks(draft); [floors[i + 1], floors[i]] = [floors[i], floors[i + 1]]; reRender(app); }
   });
   html.find('[data-action="floor-insert"]').on("click", (ev) => {
     const id = ev.currentTarget.closest("[data-floor-id]")?.dataset.floorId;
     const i = floorIndex(id);
-    const nf = { id: uid("f"), kind: "password", label: "", dv: 6, description: "", ice: [], demon: null };
+    if (i < 0) return;
+    explicitLinks(draft);
+    const nf = { id: uid("f"), parentId: id, kind: "password", label: "", dv: 6, description: "", ice: [], demon: null };
+    for (const f of draft.floors) if (f.parentId === id) f.parentId = nf.id;
     app.state.draft.floors.splice(i + 1, 0, nf);
+    reRender(app);
+  });
+  html.find('[data-action="floor-branch"]').on("click", (ev) => {
+    const id = ev.currentTarget.closest("[data-floor-id]")?.dataset.floorId;
+    const i = floorIndex(id);
+    if (i < 0 || topology(draft).depths[i] < 1) return;
+    explicitLinks(draft);
+    draft.floors.splice(i + 1, 0, { id: uid("f"), parentId: id, kind: "password", label: "", dv: 6, description: "", ice: [], demon: null });
     reRender(app);
   });
   html.find('[data-action="floor-delete"]').on("click", (ev) => {
@@ -179,7 +231,17 @@ export function activateListeners(app, html) {
     const floors = app.state.draft.floors;
     if (floors.length <= 1) return;
     const i = floorIndex(id);
-    if (i >= 0) floors.splice(i, 1);
+    if (i < 0) return;
+    const previous = foundry.utils.deepClone(floors);
+    explicitLinks(draft);
+    const parentId = floors[i].parentId;
+    for (const f of floors) if (f.parentId === id) f.parentId = parentId;
+    floors.splice(i, 1);
+    const error = topology(draft).error;
+    if (error) {
+      draft.floors = previous;
+      ui.notifications.warn(loc(error));
+    }
     reRender(app);
   });
 
@@ -214,6 +276,7 @@ export function activateListeners(app, html) {
 
 /* ---- pickers (Dialog with portrait grid + stats) ---- */
 function openIcePicker(app, floor) {
+  const custom = Object.values(getWorld("customContent") || {}).filter(d => d.kind === "blackIce");
   const rows = Object.keys(BLACK_ICE).map((t) => {
     const d = BLACK_ICE[t];
     const name = loc(`${d.effectKey}.name`);
@@ -222,7 +285,7 @@ function openIcePicker(app, floor) {
       <span class="crns-pick-name">${name}</span>
       <span class="crns-pick-stats">PER ${d.per} · SPD ${d.spd} · ATK ${d.atk} · DEF ${d.def} · REZ ${d.rez}</span>
     </button>`;
-  }).join("");
+  }).join("") + custom.map(d => `<button type="button" class="crns-pick" data-type="custom_${esc(d.id)}"><img src="${esc(d.img || "icons/svg/microchip.svg")}" alt=""><span class="crns-pick-name">${esc(d.name)}</span><span class="crns-pick-stats">PER ${d.stats.per} · SPD ${d.stats.spd} · ATK ${d.stats.atk} · DEF ${d.stats.def} · REZ ${d.stats.rez}</span></button>`).join("");
   const dlg = new Dialog({
     title: loc("CRNS.Editor.PickIce"),
     content: `<div class="crns-pick-grid">${rows}</div>`,
@@ -232,7 +295,8 @@ function openIcePicker(app, floor) {
       html[0].querySelectorAll(".crns-pick").forEach((btn) => {
         btn.addEventListener("click", () => {
           if ((floor.ice?.length ?? 0) < MAX_ICE_PER_FLOOR) {
-            (floor.ice ||= []).push({ id: uid("i"), type: btn.dataset.type, actorId: "" });
+            const content = custom.find(d => `custom_${d.id}` === btn.dataset.type);
+            (floor.ice ||= []).push({ id: uid("i"), type: btn.dataset.type, actorId: "", ...(content ? { content } : {}) });
             app.render(false);
           }
           dlg.close();
@@ -244,6 +308,7 @@ function openIcePicker(app, floor) {
 }
 
 function openDemonPicker(app, floor) {
+  const custom = Object.values(getWorld("customContent") || {}).filter(d => d.kind === "demon");
   const rows = Object.keys(DEMONS).map((t) => {
     const d = DEMONS[t];
     const name = loc(`CRNS.Demon.${t}.name`);
@@ -252,7 +317,7 @@ function openDemonPicker(app, floor) {
       <span class="crns-pick-name">${name}</span>
       <span class="crns-pick-stats">REZ ${d.rez} · INT ${d.interface} · NA ${d.actions} · CN ${d.combatNumber}</span>
     </button>`;
-  }).join("");
+  }).join("") + custom.map(d => `<button type="button" class="crns-pick" data-type="custom_${esc(d.id)}"><img src="${esc(d.img || "icons/svg/microchip.svg")}" alt=""><span class="crns-pick-name">${esc(d.name)}</span><span class="crns-pick-stats">REZ ${d.stats.rez} · INT ${d.stats.interface} · NA ${d.stats.actions} · CN ${d.stats.combatNumber}</span></button>`).join("");
   const dlg = new Dialog({
     title: loc("CRNS.Editor.PickDemon"),
     content: `<div class="crns-pick-grid">${rows}</div>`,
@@ -262,7 +327,8 @@ function openDemonPicker(app, floor) {
       html[0].querySelectorAll(".crns-pick").forEach((btn) => {
         btn.addEventListener("click", () => {
           if (!floor.demon) {
-            floor.demon = { id: uid("d"), type: btn.dataset.type, actorId: "" };
+            const content = custom.find(d => `custom_${d.id}` === btn.dataset.type);
+            floor.demon = { id: uid("d"), type: btn.dataset.type, actorId: "", ...(content ? { content } : {}) };
             app.render(false);
           }
           dlg.close();

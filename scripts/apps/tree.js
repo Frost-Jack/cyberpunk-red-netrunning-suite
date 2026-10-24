@@ -3,7 +3,7 @@
  * first, alphabetical), with per-row actions, drag&drop reparenting, and
  * create/import/export. All state writes go through mutate(). */
 
-import { loc } from "../constants.js";
+import { loc, esc } from "../constants.js";
 import { getWorld, mutate } from "../data.js";
 import { promptText } from "./suite-app.js";
 import { snapshotEntityActor } from "../cpr-bridge.js";
@@ -179,7 +179,7 @@ export function activateListeners(app, html) {
     const name = nodeName(nodeId);
     const ok = await Dialog.confirm({
       title: loc("CRNS.Tree.DeleteTitle"),
-      content: `<p>${loc("CRNS.Tree.DeleteArchConfirm", { name })}</p>`,
+      content: `<p>${esc(loc("CRNS.Tree.DeleteArchConfirm", { name }))}</p>`,
     });
     if (ok) {
       const deletedArchId = archIdOfNode(nodeId);
@@ -192,7 +192,7 @@ export function activateListeners(app, html) {
     const name = nodeName(nodeId);
     const ok = await Dialog.confirm({
       title: loc("CRNS.Tree.DeleteTitle"),
-      content: `<p>${loc("CRNS.Tree.DeleteFolderConfirm", { name })}</p>`,
+      content: `<p>${esc(loc("CRNS.Tree.DeleteFolderConfirm", { name }))}</p>`,
     });
     if (ok) {
       await mutate("tree.delete", { nodeId });

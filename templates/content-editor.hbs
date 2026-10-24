@@ -1,0 +1,48 @@
+<form class="crns-root theme-green crns-content" autocomplete="off">
+  <aside class="crns-content-library">
+    <button type="button" data-action="content-new">{{localize "CRNS.Content.New"}}</button>
+    {{#each definitions}}<button type="button" data-action="content-load" data-id="{{id}}" title="{{name}}"><strong>{{name}}</strong><small>{{kind}}</small></button>{{/each}}
+    <label>{{localize "CRNS.Content.Sample"}}<select name="sample"><option value=""></option>{{#each samples}}<option value="{{uuid}}">{{name}}</option>{{/each}}</select></label>
+    <button type="button" data-action="content-sample">{{localize "CRNS.Content.FromSample"}}</button>
+    <label>{{localize "CRNS.Content.Import"}}<input type="file" accept=".json,application/json" data-action="content-import"></label>
+  </aside>
+  <section class="crns-content-fields">
+    <p class="crns-content-note">{{localize "CRNS.Content.DocumentHint"}}</p>
+    <div class="crns-content-grid">
+      <label>{{localize "CRNS.Content.Kind"}}<select name="kind">{{#each kinds}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+      <label>{{localize "CRNS.Content.Name"}}<input name="name" value="{{def.name}}" maxlength="120" required></label>
+      <label>{{localize "CRNS.Content.Image"}}<input name="img" value="{{def.img}}" placeholder="icons/svg/microchip.svg"></label>
+      {{#unless isDemon}}<label>{{localize "CRNS.Content.Class"}}<select name="class">{{#each classes}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>{{/unless}}
+      {{#if isProgram}}<label>{{localize "CRNS.Content.IceClass"}}<select name="blackIceType">{{#each iceClasses}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>{{/if}}
+    </div>
+    <label>{{localize "CRNS.Content.Description"}}<textarea name="description" rows="4" maxlength="12000">{{def.description}}</textarea></label>
+    <div class="crns-content-stats">{{#each stats}}<label>{{key}}<input type="number" name="stat_{{key}}" value="{{value}}" min="0" max="10000" step="1"></label>{{/each}}</div>
+    <fieldset><legend>{{localize "CRNS.Content.Target"}}</legend>{{#each targets}}<label class="crns-content-check"><input type="checkbox" name="targets" value="{{key}}" {{#if checked}}checked{{/if}}>{{name}}</label>{{/each}}</fieldset>
+    <div class="crns-content-grid">
+      <label>{{localize "CRNS.Content.Damage"}}<input name="standard" value="{{def.damage.standard}}" placeholder="2d6+1"></label>
+      <label>{{localize "CRNS.Content.IceDamage"}}<input name="blackIce" value="{{def.damage.blackIce}}" placeholder="3d6"></label>
+      <label>{{localize "CRNS.Content.Cost"}}<input type="number" name="netActions" min="1" max="10" value="{{def.netActions}}"></label>
+      <label>{{localize "CRNS.Content.Limit"}}<select name="usage">{{#each usage}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+      {{#if isProgram}}<label>{{localize "CRNS.Content.Size"}}<input type="number" name="size" min="0" max="100" value="{{def.size}}"></label>{{/if}}
+      <label>{{localize "CRNS.Content.Price"}}<input type="number" name="price" min="0" max="10000000" value="{{def.price}}"></label>
+    </div>
+    <fieldset><legend>{{localize "CRNS.Content.Visual"}}</legend><div class="crns-content-grid">
+      <label>{{localize "CRNS.Content.Model"}}<select name="model">{{#each models}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+      <label>{{localize "CRNS.Content.Color"}}<input name="color" value="{{def.visual.color}}" placeholder="#55bbcc" pattern="#[0-9a-fA-F]{6}"></label>
+      <label>{{localize "CRNS.Content.Animation"}}<select name="animation">{{#each animations}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+    </div></fieldset>
+    <fieldset><legend>{{localize "CRNS.Content.EffectTitle"}}</legend>
+      <p class="crns-content-note">{{localize "CRNS.Content.EffectHint"}}</p>
+      {{#each effects}}<div class="crns-content-effect"><select name="effectType{{index}}" aria-label="{{localize "CRNS.Content.EffectTitle"}}">{{#each choices}}<option value="{{key}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select><textarea name="effectDescription{{index}}" rows="2" placeholder="{{localize "CRNS.Content.Description"}}">{{description}}</textarea><button type="button" data-action="content-remove-effect" data-index="{{index}}" aria-label="{{localize "CRNS.Content.Delete"}}"><i class="fas fa-times"></i></button></div>{{/each}}
+      <button type="button" data-action="content-add-effect">{{localize "CRNS.Content.AddEffect"}}</button>
+    </fieldset>
+    <p class="crns-content-note">ID: {{def.id}}{{#if dirty}} · {{localize "CRNS.Content.Unsaved"}}{{/if}}</p>
+  </section>
+  <footer class="crns-content-footer">
+    <button type="button" data-action="content-save" {{#if busy}}disabled{{/if}}>{{localize "CRNS.Content.Save"}}</button>
+    <button type="button" data-action="content-create" {{#if busy}}disabled{{/if}}>{{localize "CRNS.Content.Create"}}</button>
+    <button type="button" data-action="content-copy">{{localize "CRNS.Content.Copy"}}</button>
+    <button type="button" data-action="content-export">{{localize "CRNS.Content.Export"}}</button>
+    <button type="button" data-action="content-delete">{{localize "CRNS.Content.Delete"}}</button>
+  </footer>
+</form>

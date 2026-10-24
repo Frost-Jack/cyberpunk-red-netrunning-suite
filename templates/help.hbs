@@ -3,12 +3,7 @@
       every Black ICE, program and demon. Entries relevant to the viewing player
       carry an accent highlight frame. --}}
 {{#if help}}
-<button type="button" class="crns-icon-btn crns-help-btn" data-action="help-open"
-        title="{{localize "CRNS.Help.Open"}}" aria-label="{{localize "CRNS.Help.Open"}}">
-  <i class="fas fa-circle-question"></i>
-</button>
-
-<div class="crns-help-overlay" tabindex="-1" role="dialog" aria-label="{{localize "CRNS.Help.Title"}}">
+<div class="crns-help-overlay" tabindex="-1" role="dialog" aria-hidden="true" aria-label="{{localize "CRNS.Help.Title"}}">
   <div class="crns-help-panel">
     <div class="crns-help-head">
       <span class="crns-help-title"><i class="fas fa-circle-question"></i> {{localize "CRNS.Help.Title"}}</span>
@@ -18,14 +13,33 @@
       </button>
     </div>
 
-    <div class="crns-help-body">
-      {{!-- ===== Black ICE ===== --}}
-      <h3 class="crns-help-sec"><i class="fas fa-skull"></i> {{localize "CRNS.Help.BlackIce"}}</h3>
+    <div class="crns-help-tabs" role="tablist" aria-label="{{localize "CRNS.Help.Title"}}">
+      <button type="button" role="tab" id="{{help.tabPrefix}}-tab-catalog" data-help-tab="catalog"
+              aria-controls="{{help.tabPrefix}}-catalog" aria-selected="{{help.catalogActive}}"
+              tabindex="{{#if help.catalogActive}}0{{else}}-1{{/if}}">{{help.catalogLabel}}</button>
+      <button type="button" role="tab" id="{{help.tabPrefix}}-tab-rules" data-help-tab="rules"
+              aria-controls="{{help.tabPrefix}}-rules" aria-selected="{{help.rulesActive}}"
+              tabindex="{{#if help.rulesActive}}0{{else}}-1{{/if}}">{{help.rulesLabel}}</button>
+    </div>
 
-      <h4 class="crns-help-subsec">{{localize "CRNS.Help.AntiNetrunner"}}</h4>
+    <div class="crns-help-search">
+      <label for="{{help.tabPrefix}}-search">{{help.searchLabel}}</label>
+      <input type="search" id="{{help.tabPrefix}}-search" data-help-search-input
+             value="{{help.searchQuery}}" placeholder="{{help.searchPlaceholder}}" autocomplete="off" />
+      <button type="button" data-action="help-search-clear">{{help.clearSearchLabel}}</button>
+    </div>
+
+    <section class="crns-help-body crns-help-tab-panel" id="{{help.tabPrefix}}-catalog" data-help-panel="catalog"
+             role="tabpanel" aria-labelledby="{{help.tabPrefix}}-tab-catalog"{{#unless help.catalogActive}} hidden{{/unless}}>
+      {{!-- ===== Black ICE ===== --}}
+      <p class="crns-help-empty" data-help-empty role="status" hidden>{{help.noResultsLabel}}</p>
+      <h3 class="crns-help-sec" data-help-heading="ice-"><i class="fas fa-skull"></i> {{localize "CRNS.Help.BlackIce"}}</h3>
+
+      <section class="crns-help-group" data-help-group="ice-anti-netrunner">
+      <h4 class="crns-help-group-title"><span>{{localize "CRNS.Help.AntiNetrunner"}}</span><span class="crns-help-count">{{help.iceAntiNetrunner.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.iceAntiNetrunner as |e|}}
-        <div class="crns-help-entry crns-help-ice{{#if e.framed}} framed{{/if}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameIce"}}"{{/if}}>
+        <div class="crns-help-entry crns-help-ice{{#if e.framed}} framed{{/if}}" data-help-search="{{e.search}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameIce"}}"{{/if}}>
           <img class="crns-help-portrait" src="{{e.img}}" alt="{{e.name}}" />
           <div class="crns-help-info">
             <div class="crns-help-name">{{e.name}}</div>
@@ -41,11 +55,13 @@
         </div>
         {{/each}}
       </div>
+      </section>
 
-      <h4 class="crns-help-subsec">{{localize "CRNS.Help.AntiProgram"}}</h4>
+      <section class="crns-help-group" data-help-group="ice-anti-program">
+      <h4 class="crns-help-group-title"><span>{{localize "CRNS.Help.AntiProgram"}}</span><span class="crns-help-count">{{help.iceAntiProgram.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.iceAntiProgram as |e|}}
-        <div class="crns-help-entry crns-help-ice{{#if e.framed}} framed{{/if}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameIce"}}"{{/if}}>
+        <div class="crns-help-entry crns-help-ice{{#if e.framed}} framed{{/if}}" data-help-search="{{e.search}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameIce"}}"{{/if}}>
           <img class="crns-help-portrait" src="{{e.img}}" alt="{{e.name}}" />
           <div class="crns-help-info">
             <div class="crns-help-name">{{e.name}}</div>
@@ -61,17 +77,19 @@
         </div>
         {{/each}}
       </div>
+      </section>
 
       {{!-- ===== Programs ===== --}}
-      <h3 class="crns-help-sec"><i class="fas fa-microchip"></i> {{localize "CRNS.Help.Programs"}}</h3>
+      <h3 class="crns-help-sec" data-help-heading="program-"><i class="fas fa-microchip"></i> {{localize "CRNS.Help.Programs"}}</h3>
 
-      <h4 class="crns-help-subsec">{{localize "CRNS.Help.Boosters"}}</h4>
+      <section class="crns-help-group" data-help-group="program-boosters">
+      <h4 class="crns-help-group-title"><span>{{localize "CRNS.Help.Boosters"}}</span><span class="crns-help-count">{{help.boosters.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.boosters as |e|}}
-        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
-          <span class="crns-help-code">{{e.code}}</span>
+        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}" data-help-search="{{e.search}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
+          {{#if e.img}}<img class="crns-help-portrait" src="{{e.img}}" alt="" loading="lazy" />{{/if}}
           <div class="crns-help-info">
-            <div class="crns-help-name">{{e.name}}</div>
+            <div class="crns-help-name"><span class="crns-help-code">{{e.code}}</span> {{e.name}}</div>
             <div class="crns-help-stats">
               <span>{{localize "CRNS.Help.StatAtk"}} {{e.atk}}</span>
               <span>{{localize "CRNS.Help.StatDef"}} {{e.def}}</span>
@@ -82,14 +100,16 @@
         </div>
         {{/each}}
       </div>
+      </section>
 
-      <h4 class="crns-help-subsec">{{localize "CRNS.Help.Defenders"}}</h4>
+      <section class="crns-help-group" data-help-group="program-defenders">
+      <h4 class="crns-help-group-title"><span>{{localize "CRNS.Help.Defenders"}}</span><span class="crns-help-count">{{help.defenders.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.defenders as |e|}}
-        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
-          <span class="crns-help-code">{{e.code}}</span>
+        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}" data-help-search="{{e.search}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
+          {{#if e.img}}<img class="crns-help-portrait" src="{{e.img}}" alt="" loading="lazy" />{{/if}}
           <div class="crns-help-info">
-            <div class="crns-help-name">{{e.name}}</div>
+            <div class="crns-help-name"><span class="crns-help-code">{{e.code}}</span> {{e.name}}</div>
             <div class="crns-help-stats">
               <span>{{localize "CRNS.Help.StatAtk"}} {{e.atk}}</span>
               <span>{{localize "CRNS.Help.StatDef"}} {{e.def}}</span>
@@ -100,14 +120,16 @@
         </div>
         {{/each}}
       </div>
+      </section>
 
-      <h4 class="crns-help-subsec">{{localize "CRNS.Help.Attackers"}}</h4>
+      <section class="crns-help-group" data-help-group="program-attackers">
+      <h4 class="crns-help-group-title"><span>{{localize "CRNS.Help.Attackers"}}</span><span class="crns-help-count">{{help.attackers.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.attackers as |e|}}
-        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
-          <span class="crns-help-code">{{e.code}}</span>
+        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}" data-help-search="{{e.search}}"{{#if e.framed}} title="{{localize "CRNS.Help.FrameProgram"}}"{{/if}}>
+          {{#if e.img}}<img class="crns-help-portrait" src="{{e.img}}" alt="" loading="lazy" />{{/if}}
           <div class="crns-help-info">
-            <div class="crns-help-name">{{e.name}}</div>
+            <div class="crns-help-name"><span class="crns-help-code">{{e.code}}</span> {{e.name}}</div>
             <div class="crns-help-stats">
               <span>{{localize "CRNS.Help.StatAtk"}} {{e.atk}}</span>
               <span>{{localize "CRNS.Help.StatDef"}} {{e.def}}</span>
@@ -118,12 +140,14 @@
         </div>
         {{/each}}
       </div>
+      </section>
 
       {{!-- ===== Demons ===== --}}
-      <h3 class="crns-help-sec"><i class="fas fa-hat-wizard"></i> {{localize "CRNS.Help.Demons"}}</h3>
+      <section class="crns-help-group" data-help-group="demons">
+      <h4 class="crns-help-group-title"><span><i class="fas fa-hat-wizard" aria-hidden="true"></i> {{localize "CRNS.Help.Demons"}}</span><span class="crns-help-count">{{help.demons.length}}</span></h4>
       <div class="crns-help-grid">
         {{#each help.demons as |e|}}
-        <div class="crns-help-entry crns-help-demon">
+        <div class="crns-help-entry crns-help-demon" data-help-search="{{e.search}}">
           <img class="crns-help-portrait" src="{{e.img}}" alt="{{e.name}}" />
           <div class="crns-help-info">
             <div class="crns-help-name">{{e.name}}</div>
@@ -137,7 +161,62 @@
         </div>
         {{/each}}
       </div>
-    </div>
+      </section>
+      <h3 class="crns-help-sec" data-help-heading="equipment-"><i class="fas fa-microchip"></i> {{help.equipmentTitle}}</h3>
+      {{#each help.equipmentGroups as |group|}}
+      <section class="crns-help-group" data-help-group="equipment-{{group.key}}">
+      <h4 class="crns-help-group-title"><span>{{group.name}}</span><span class="crns-help-count">{{group.entries.length}}</span></h4>
+      <div class="crns-help-grid">
+        {{#each group.entries as |e|}}
+        <div class="crns-help-entry crns-help-prog{{#if e.framed}} framed{{/if}}" tabindex="0"
+             data-equipment-key="{{e.key}}" data-help-search="{{e.search}}" data-net-tooltip="{{e.tooltip}}" title="{{e.tooltip}}">
+          {{#if e.img}}<img class="crns-help-portrait" src="{{e.img}}" alt="" loading="lazy" />{{/if}}
+          <div class="crns-help-info">
+            <div class="crns-help-name">{{e.name}}{{#if e.framed}} <i class="fas fa-check" aria-label="{{e.installedLabel}}"></i>{{/if}}</div>
+            <div class="crns-help-effect">{{e.effect}}</div>
+            <div class="crns-help-source">{{e.source}}</div>
+          </div>
+        </div>
+        {{/each}}
+      </div>
+      </section>
+      {{/each}}
+    </section>
+    <section class="crns-help-body crns-help-tab-panel crns-help-rules" id="{{help.tabPrefix}}-rules" data-help-panel="rules"
+             role="tabpanel" aria-labelledby="{{help.tabPrefix}}-tab-rules"{{#unless help.rulesActive}} hidden{{/unless}}>
+      <p class="crns-help-empty" data-help-empty role="status" hidden>{{help.noResultsLabel}}</p>
+      <div class="crns-help-rules-grid">
+      {{#each help.rules as |rule|}}
+      <article class="crns-help-rule" data-rule-id="{{rule.id}}" data-help-search="{{rule.search}}">
+        <h3 class="crns-help-sec">{{rule.title}}</h3>
+        {{#if rule.compact}}
+        {{#if rule.summary}}<p class="crns-help-rule-summary">{{rule.summary}}</p>{{/if}}
+        {{#if rule.diagram}}<pre class="crns-help-rule-diagram">{{rule.diagram}}</pre>{{/if}}
+        {{#if rule.points}}
+        <ul class="crns-help-rule-points">{{#each rule.points as |point|}}<li>{{point}}</li>{{/each}}</ul>
+        {{/if}}
+        {{#if rule.example}}
+        <div class="crns-help-rule-example">
+          <h4>{{rule.example.label}}</h4>
+          <ol class="crns-help-rule-steps">{{#each rule.example.steps as |step|}}<li>{{step}}</li>{{/each}}</ol>
+          <p class="crns-help-rule-result">{{rule.example.result}}</p>
+        </div>
+        {{/if}}
+        {{#if rule.table}}
+        <table class="crns-help-rule-table">
+          <thead><tr>{{#each rule.table.headers as |header|}}<th scope="col">{{header}}</th>{{/each}}</tr></thead>
+          <tbody>{{#each rule.table.rows as |row|}}<tr>{{#each row as |cell|}}<td>{{cell}}</td>{{/each}}</tr>{{/each}}</tbody>
+        </table>
+        {{/if}}
+        {{else}}
+        {{#each rule.body as |paragraph|}}<p>{{paragraph}}</p>{{/each}}
+        {{/if}}
+        <div class="crns-help-source">{{rule.source}}</div>
+        {{#if rule.links}}<ul class="crns-help-rule-links">{{#each rule.links as |link|}}<li><a href="{{link.url}}" target="_blank" rel="noopener noreferrer">{{link.title}}</a></li>{{/each}}</ul>{{/if}}
+      </article>
+      {{/each}}
+      </div>
+    </section>
   </div>
 </div>
 {{/if}}

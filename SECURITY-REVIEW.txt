@@ -1,0 +1,154 @@
+Проверка состояния и прав, Foundry VTT v12 / cyberpunk-red-core 0.92.4
+Дата: 24.10.2026. Проверялись исходники установленного модуля и системы.
+Живые Actor, Item, Combat, настройки мира и пользовательские данные не менялись.
+
+Исправленные дефекты
+
+P1. Потеря обновлений при двух ГМ.
+Воспроизведение: два ГМ одновременно тратят NET Actions или редактируют session.
+Причина: mutate исполнял applyOp локально на любом ГМ, тогда как operationQueue
+сериализовал записи только внутри одного клиента.
+Исправление: все пользователи, кроме primary GM, отправляют запрос primary GM.
+Файл: scripts/data.js, mutate. Обработчики сохраняют очередь операций.
+
+P1. Удаление пользовательских или legacy Actor при очистке.
+Воспроизведение: в arch/progState находится actorId обычного Actor; удалить
+архитектуру, программу или участника. Раньше deleteEntityActors удалял любой ID.
+Исправление: новые временные Actor получают managedEntity=true. Массовая очистка
+удаляет только blackIce/demon с этим явным флагом. Созданные вручную постоянные
+документы редактора контента этого флага не получают. Новые папки помечаются
+managedEntityFolder; удаление разрешено только для такой пустой папки без дочерних
+папок. arch.update принимает существующие actorId только из прежней архитектуры.
+Файлы: scripts/cpr-bridge.js, scripts/data.js.
+
+P1. Наблюдатель мог применять урон, задав себе произвольную цель.
+Воспроизведение: spectator задаёт session.setTarget на ICE и вызывает ent.damage.
+Причина: проверялось владение любым participant и совпадение stored target.
+Исправление: ent.damage/run.progDamage дополнительно требуют действующего runner
+этого пользователя в той же архитектуре и на этаже цели. Вышедший runner тоже
+не может применять урон. ГМ сохраняет свои полномочия.
+Файл: scripts/data.js, canDamageTarget.
+
+P2. Повторная доставка запроса повторно тратила действия или создавала документы.
+Воспроизведение: два module socket пакета mutate с одинаковыми userId/requestId.
+Исправление: primary GM сохраняет обещание выполняющегося запроса и его результат;
+дубликаты получают тот же результат. Кэш ограничен 512 запросами, активный запрос
+не вытесняется. Ответ клиента принимается лишь для ожидаемого gmId. Проверяются
+существование активного requester, own operation, object payload и requestId.
+Файлы: scripts/socket.js, scripts/data.js.
+
+P2. Сохранение архитектуры снимало привязку player Black ICE и историю Slide.
+Воспроизведение: player Black ICE с progKey преследует runner; ГМ сохраняет этаж.
+Причина: arch.update сохранял только записи с iceId из определения архитектуры.
+Исправление: записи с progKey проверяются по progState и сохраняются отдельно.
+Файл: scripts/data.js, arch.update.
+
+P2. После Jack Out оставались SPEED tests, targets, activations и Slide attempt.
+Воспроизведение: начать реакцию или бросок программы и выйти из NET до завершения.
+Исправление: общий cleanup ссылок на уходящего runner/programs при Jack Out,
+disconnect, удалении roster и архитектуры; очистка program floor overrides/reveal
+при удалении runner; очистка targets и deployment targetRef после удаления BI.
+Файл: scripts/data.js, clearRunnerReferences/pruneProgBiSideEffects.
+
+P2. Повторная или запоздалая реакция создавала несколько результатов.
+Воспроизведение: дважды отправить SPEED/Slide notification, отменить бросок ГМ
+или отключить runner до завершения await roll.
+Исправление: обработка одной реакции за раз; null roll оставляет тест незавершённым;
+после await повторно проверяются primary GM, pending test и текущий participant.
+Проигранный Slide очищает attempt. Числовая инициатива и сравнения RAW не менялись.
+Файл: scripts/main.js, resolveReaction/handleSpeedTest/handleSlideTest.
+
+P2. Ответ на защиту доверял attack metadata и не имел идентичности запроса.
+Воспроизведение: дважды ответить на одну защиту либо завершить её после disconnect.
+Исправление: primary GM выдаёт defenseId и сохраняет контекст запроса. Ответ
+использует исходные total/attacker/target, потребляет запрос однократно и проверяет
+участников. Локальные prompts убираются после изменения session, выхода source
+или target, исчезновения защищаемой программы. Повторная доставка prompt не
+создаёт копии. Отмена автоматической защиты не публикует нулевой бросок.
+Файлы: scripts/main.js; defenseId пересылается из scripts/apps/actions.js.
+
+Дополнительное исправление после интеграции: P2, ручное удаление документов.
+Воспроизведение: удалить world runner Actor, architecture ICE/Demon, embedded
+Program или backing BI Actor штатной командой Foundry. Раньше сохранялись roster,
+arch def, progState, targets, attachments и pending tests; сохранённый Item мог
+оставаться Rezzed после удаления его backing Actor.
+Исправление: primary-GM deleteActor/deleteItem hooks вызывают GM-only
+session.documentDeleted. Операция повторно проверяет отсутствие документа,
+очищает только соответствующие ссылки; удаление runner чистит его roster и
+только managed backing actors, удаление architecture Actor убирает его def и
+demonState, удаление Program сохраняет остальные программы. Если Item пережил
+удаление backing Actor, выполняется штатный derezProgram без сброса round/run
+allowance. Compendium и synthetic Actor удаления не выдаются за world Actor.
+Проверка запускается по событию удаления, сканирования на каждом render нет.
+Файлы: scripts/data.js, scripts/main.js, tools/security-test.mjs.
+
+Оставшиеся ограничения
+
+P1. Module socket не является границей аутентификации.
+Фактический handler получает только data. userId, gmId, defenseId и результаты
+бросков приходят в payload. Злоумышленник с консолью клиента может подделать
+claimed GM ID или notification. Проверка роли защищает обычные действия UI,
+но не удостоверяет отправителя module socket пакета. Безопасная демонстрация
+на копии мира: отправить mutate с op=ping и userId действующего ГМ, затем увидеть
+в mutateResult result.gm=true. Никакие такие пакеты в живой мир не отправлялись.
+Для adversarial security требуется отдельный аутентифицированный канал запросов
+через core document updates с проверенной сервером identity либо серверный модуль.
+Добавленные gmId/ownership checks не объявляются решением этой проблемы.
+
+P1. Fog и скрытые этажи не являются секретом для клиента с консолью.
+Полная netArchs/session/customContent хранится в world settings. UI ограничивает
+отображение, однако исходные данные settings доступны клиентской стороне.
+Надёжное сокрытие требует GM-only хранения и передачи разрешённой игроку проекции.
+
+P2. Смена primary GM во время уже начатой операции не обеспечивает транзакцию.
+Есть один writer для обычных новых операций. При разрыве связи/смене лидера после
+создания Actor, но до сохранения session возможны неполный результат или orphan.
+Кэш duplicate requests локален клиенту и не переживает перезагрузку/смену ГМ;
+очень старый повтор после вытеснения 512 результатов может выполниться повторно.
+Timeout 10 секунд означает неизвестный клиенту итог, а не отмену операции ГМ.
+Автоматических повторов после timeout модуль не делает.
+
+P2. Legacy временные документы без нового managedEntity флага сохраняются.
+Автоматической миграции, пометки по имени/папке и удаления существующих документов
+не выполнялось: такие признаки недостаточно надёжны. Удалять старые orphan Actor
+следует вручную после проверки. Существующие legacy папки тоже сохраняются.
+
+P2. Ожидающая защита хранится в памяти primary GM.
+После перезагрузки/смены primary GM старый defenseId отклоняется; при более чем
+256 ожидающих запросах старейший вытесняется. Бросок атаки следует повторить.
+
+Проверки
+
+node tools/security-test.mjs: 24 группы регрессий. Выполняются реальные тела
+scripts/data.js, scripts/socket.js, scripts/main.js, scripts/cpr-bridge.js
+в VM с mocked Foundry I/O. Проверяются границы операции, сериализация, второй ГМ,
+duplicate socket request, attachments/slid при arch.update, jack-out cleanup,
+runner removal, spectator damage denial, managed cleanup, занятые/legacy папки,
+новые managed Actor, отменённый/запоздалый SPEED, single in-flight reaction,
+defenseId, повторный ответ, подмена attack metadata и удаление локальных prompts.
+Это не проверка в браузере Foundry и не многоклиентная сетевая сессия.
+
+Общая интеграция: rules-test.mjs 41 групп, spectator-test.mjs 13,
+branching-test.mjs 18 прошли после обновления VM fixtures новых импортов.
+security-test.mjs 24 группы; node --check и git diff --check прошли.
+Новые content-test и content-ui-test проверяют определения, импорт/экспорт,
+native types, ограничение двойного создания и сохранность drafts при busy.
+Это по-прежнему офлайн-проверки, не многоклиентская Foundry-сессия.
+
+Ручная проверка в копии мира
+
+1. Два активных ГМ, один player: одновременно потратить по одному действию
+   runner. Итог содержит обе траты; в консоли нет повторных Actor creation.
+2. Открыть deferred defence у player, затем Jack Out target или source.
+   Prompt исчезает. Старый ответ не создаёт сравнение или визуальную атаку.
+3. Отменить SPEED roll, затем повторить. До успешного броска тест остаётся,
+   после успешного существует ровно одна карточка и тест исчезает.
+4. Прикрепить player BI, сохранить архитектуру без изменений. Привязка и Slide
+   история сохраняются. Jack Out убирает тесты, привязки и временный BI Actor.
+5. Создать обычного Actor и legacy Black ICE в папке архитектуры, удалить
+   архитектуру. Обычный Actor, legacy Black ICE и непустая папка сохраняются.
+
+Дополнение общей интеграции: native bridge умеет выключить surviving Black ICE
+Item и восстановить его REZ без экипированной деки при удалении backing Actor.
+Проверено rules-test (группа41). Это тот же безопасный Black ICE путь native
+unsetRezzed/update без отсутствующего canvas token; не удаляется личный Item.

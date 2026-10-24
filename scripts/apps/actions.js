@@ -14,8 +14,12 @@
  * last damage total this client rolled is stashed on app._lastDamage. */
 
 import { MODULE_ID, loc, esc, BLACK_ICE, DEMONS, ENTITY_ICONS, abbrFor, blackIceTypeForName } from "../constants.js";
-import { getWorld, mutate, notifyClients, canDerezTrap } from "../data.js";
+import { getWorld, mutate, notifyClients, canDerezTrap, programUsed, turnKey, slideDestinations, activeProgramRefs } from "../data.js";
 import * as bridge from "../cpr-bridge.js";
+import { topology } from "../topology.js";
+import { programHint } from "../descriptions.js";
+import { equipmentProfile } from "../equipment.js";
+import { equipmentDamageFormula } from "../equipment-runtime.js";
 
 /* ------------------------------------------------------------------ */
 /* Selection resolution                                                */
@@ -89,18 +93,27 @@ function programVMs(actor, part, session, opts = {}) {
     const isBlackIce = chrome.cls === "blackice";
     const isBooster = chrome.cls === "booster";
     const isDefender = chrome.cls === "defender";
-    const rezMax = p.system?.rez?.max ?? 0;
-    const rez = p.system?.rez?.value ?? 0;
+    const ps = progState[`${part.pid}|${p.id}`] || null;
+    const backingActor = ps?.actorId ? game.actors?.get(ps.actorId) : null;
+    const rezMax = backingActor?.system?.stats?.rez?.max ?? p.system?.rez?.max ?? 0;
+    const rez = backingActor?.system?.stats?.rez?.value ?? p.system?.rez?.value ?? 0;
     const atk = p.system?.atk ?? 0;
     const def = p.system?.def ?? 0;
-    const ps = progState[`${part.pid}|${p.id}`] || null;
     const isDeployed = isBlackIce && ps?.mode === "deployed";
-    // Destroyed lockout (§10): a program destroyed (REZ→0) this run renders BROKEN
-    // and cannot be re-activated until the GM restores it / the owner disconnects.
+    // Explicit destruction survives disconnect; 0 REZ alone is defeat.
     const isDestroyed = !!destroyed[`${part.pid}|${p.id}`];
+    const defeated = !!session.defeated?.[`${part.pid}|${p.id}`] || (rezzed && rezMax > 0 && rez <= 0);
     // Class bucket for color coding + a localized class label (Task B).
     const classBucket = isBooster ? "booster" : isDefender ? "defender"
       : isBlackIce ? "blackice" : "attacker";
+    const custom = bridge.programDefinition?.(p);
+    const once = custom ? custom.usage === "run" : isDefender || ["superglue", loc("CRNS.Program.Superglue.name").toLowerCase()].includes(p.name?.toLowerCase());
+    const cost = custom?.netActions || 1;
+    const activateReason = !part.jackedIn ? "CRNS.Content.JackFirst" : part.netEffects?.deckDisabled ? "CRNS.Equipment.DeckDisabled"
+      : defeated ? "CRNS.Rules.DeactivateFirst" : programUsed(session, part, p.id) ? "CRNS.Errors.AlreadyRezzed"
+      : once && part.runUsedIds?.[p.id] ? "CRNS.Rules.OncePerRun"
+      : (part.actions?.value || 0) < cost ? "CRNS.Errors.NoActions"
+      : isAttacker && !session.targets?.[game.user.id] ? "CRNS.Errors.NoTarget" : "";
     return {
       id: p.id,
       name: p.name,
@@ -110,10 +123,12 @@ function programVMs(actor, part, session, opts = {}) {
       classBucket,
       classLabel: `CRNS.ProgramClass.${classBucket}`,
       rezzed,
-      derezzed: rezzed && rezMax > 0 && rez <= 0,
+      derezzed: defeated,
       isAttacker,
       isBlackIce,
-      canRoll: rezzed && (isAttacker || isBlackIce),
+      activateReason, activateBlocked: !!activateReason, activateDisabled: !!activateReason && !game.user.isGM, actionCost: cost,
+      canRoll: rezzed && !defeated && !isDestroyed && (isAttacker || isBlackIce),
+      canDamage: !isDestroyed && !defeated && isAttacker && part.lastProgramUse?.programId === p.id && !!(p.system?.damage?.blackIce || p.system?.damage?.standard),
       atk, def,
       // Stat badges: only show the ones the program actually carries.
       showAtk: atk > 0,
@@ -132,11 +147,11 @@ function programVMs(actor, part, session, opts = {}) {
       destroyed: isDestroyed,
       // Per-program rez limit (§9): THIS item's Activate dims + is blocked once
       // it has been rezzed this turn (other programs unaffected).
-      rezUsed: !!rezUsedIds[p.id],
-      // Auto-derez hint for attacker programs (they self-derez after a DMG roll).
+      rezUsed: programUsed(session, part, p.id),
+      // Attacker programs finish after use, including effects without damage.
       autoDerezHint: rezzed && isAttacker,
       // Tooltip: full name + class + REZ.
-      tip: `${p.name} · ${chrome.cls}${rezMax > 0 ? ` · REZ ${rez}/${rezMax}` : ""}`,
+      tip: programHint(p),
     };
   });
 }
@@ -152,6 +167,19 @@ function kindLabel(kind) {
 
 /** Resolve the current target ref for a userId to a rich TARGET-panel view-model.
  *  Always returns an object (empty-state fields when there is no target). */
+function selectedContent(app) {
+  const ref = app.state.selection || "";
+  if (ref.startsWith("runner:")) {
+    const runner = resolveRunnerRef(ref);
+    return bridge.programDefinition?.(runner?.actor?.getOwnedItem?.(runner?.part?.lastProgramUse?.programId));
+  }
+  if (ref.startsWith("prog:")) {
+    const { pid, programId } = parseProgRef(ref);
+    return bridge.programDefinition?.(resolveRunnerRef(`runner:${pid}`)?.actor?.getOwnedItem?.(programId));
+  }
+  return bridge.programDefinition?.(resolveIceRef(ref)?.actor);
+}
+
 function targetPanel(session, userId, app) {
   const ref = (session.targets || {})[userId] || "";
   if (!ref) return { ref: "", name: "", kind: "", kindLabel: "", img: "", hasRez: false };
@@ -189,6 +217,11 @@ function targetPanel(session, userId, app) {
 
   return {
     ref, name, kind, kindLabel: kindLabel(kind), img,
+    canEffects: game.user.isGM && kind === "runner",
+    runnerEffects: game.user.isGM && kind === "runner" ? ["fire", "deckDisabled"].filter(key => resolveRunnerRef(ref)?.part?.netEffects?.[key])
+      .map(key => ({ pid: ref.slice(7), key, label: loc(key === "fire" ? "CRNS.Content.Fire" : "CRNS.Equipment.DeckDisabled") })) : [],
+    contentEffects: game.user.isGM ? (selectedContent(app)?.effects || []).map(effect => ({ ...effect,
+      label: loc(`CRNS.Content.Effects.${effect.type}`), canApply: kind === "runner" && !["manual", "destroy"].includes(effect.type) })) : [],
     rez, rezMax, hasRez,
     rezPct: rezMax > 0 ? Math.round((rez / rezMax) * 100) : 0,
     damageBox: buildDamageBox(app, session, { ref, name }),
@@ -269,8 +302,11 @@ function abilityAvailability(part, session, archs) {
   const kind = floor?.kind || "";
   const fx = floor ? (session.floorState || {})[`${part.archId}:${floor.id}`] : null;
   const myPid = part.pid;
+  const runnerActor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  const slideLimit = equipmentProfile(runnerActor, bridge.getDeck(runnerActor)).slideAttempts || 1;
   const breached = !!(fx && fx.breached);
-  const isLast = idx === floors.length - 1;
+  const graph = topology(arch);
+  const isLast = !graph.error && idx === graph.rootIndex;
 
   const targetRef = (session.targets || {})[game.user.id] || "";
   const [tKind] = targetRef.split(":");
@@ -284,7 +320,7 @@ function abilityAvailability(part, session, archs) {
     virus: isLast,
     // Slide vs an arch ICE, or a player-placed Black ICE (prog: ref that resolves
     // to a blackice program) — Addendum 2. Demons are not slideable.
-    slide: tKind === "ice" || (tKind === "prog" && progRefIsBlackIce(session, targetRef)),
+    slide: !part.slideAttempt && (part.slideTurn !== turnKey(part) || (part.slideCount || 1) < slideLimit) && (tKind === "ice" || (tKind === "prog" && progRefIsBlackIce(session, targetRef))) && slideDestinations(session, myPid).length > 0,
     zap: true,
     scanner: true,
   };
@@ -332,10 +368,19 @@ function buildRunnerVM(app, sel, session) {
   for (let i = 0; i < maxVal; i++) pips.push({ filled: i < (actions.value || 0) });
 
   const avail = abilityAvailability(part, session, archs);
+  const equipment = session.equipment?.[pid];
+  const scoutReady = equipment?.scoutPending && (part.scoutActionSerial || 0) === (equipment.scoutSerial || 0);
   const abilities = bridge.interfaceAbilities().map((ab) => ({
     ...ab,
+    label: ab.meat ? `${ab.label} (${loc("CRNS.Rules.MeatAction")})` : ab.label,
     dim: (ab.key in avail) ? !avail[ab.key] : false,
+    reason: !ab.free && !part.jackedIn ? "CRNS.Content.JackFirst" : part.netEffects?.deckDisabled ? "CRNS.Equipment.DeckDisabled"
+      : ab.key === "scanner" && (part.meatActionTurn === turnKey(part) || part.netActionTurn === turnKey(part)) ? "CRNS.Rules.MeatActionUsed"
+      : !ab.free && !ab.meat && !(ab.key === "pathfinder" && scoutReady) && (actions.value || 0) < 1 ? "CRNS.Errors.NoActions"
+      : ab.key in avail && !avail[ab.key] ? ({ slide: "CRNS.Rules.InvalidSlide", backdoor: "CRNS.Content.RequiresPassword",
+        control: "CRNS.Content.RequiresControl", eyedee: "CRNS.Content.RequiresFile", virus: "CRNS.Content.RequiresRoot" }[ab.key] || "CRNS.Content.Unavailable") : "",
   }));
+  for (const ability of abilities) { ability.dim ||= !!ability.reason; ability.disabled = !!ability.reason && !game.user.isGM; }
   const nodes = controlledNodes(part, session, archs);
   const rezUsedIds = part.rezUsedIds || {};
   const programs = programVMs(actor, part, session, { rezUsedIds });
@@ -360,6 +405,7 @@ function buildRunnerVM(app, sel, session) {
     controlNodesJson: JSON.stringify(nodes),
     hasControl: nodes.length > 0,
     programs,
+    virusWork: part.virusWork,
     speedTests: speedTestsFor(session, pid, actor),
     defenseTests: defenseTestsFor(app, pid, actor),
     target,
@@ -439,7 +485,7 @@ function buildEntityVM(app, ref, session) {
       img: actor.img || ENTITY_ICONS[def.type] || "",
       rez, rezMax,
       rezPct: rezMax > 0 ? Math.round((rez / rezMax) * 100) : 0,
-      combatNumber: table.combatNumber ?? actor.system?.stats?.combatNumber ?? 0,
+      combatNumber: actor.system?.stats?.combatNumber ?? table.combatNumber ?? 0,
       demonPips: dpips,
       demonValue: dVal,
       demonMax: dMax,
@@ -465,7 +511,8 @@ function buildEntityVM(app, ref, session) {
     attachChoices.push({ pid: rpid, name: rActor?.name || loc("CRNS.Runners.NPC"), selected: att?.pid === rpid });
   }
 
-  const table = BLACK_ICE[def.type] || {};
+  const custom = bridge.programDefinition?.(actor);
+  const table = custom ? { damage: custom.damage.standard } : BLACK_ICE[def.type] || {};
   const hasDamage = !!table.damage;
   return {
     variant: "entity",
@@ -507,7 +554,8 @@ function buildProgEntityVM(app, ref, session) {
   const rezMax = actor.system?.stats?.rez?.max ?? 0;
   const rez = actor.system?.stats?.rez?.value ?? 0;
   const iceType = blackIceTypeForName(actor.name);
-  const table = BLACK_ICE[iceType] || {};
+  const custom = bridge.programDefinition?.(actor);
+  const table = custom ? { damage: custom.damage.standard } : BLACK_ICE[iceType] || {};
 
   const att = (session.attachments || []).find((a) => a.archId === archId && a.progKey === key) || null;
   let attachedTo = "";
@@ -536,7 +584,7 @@ function buildProgEntityVM(app, ref, session) {
     rez, rezMax,
     rezPct: rezMax > 0 ? Math.round((rez / rezMax) * 100) : 0,
     hasDamage: !!table.damage,
-    damageFormula: table.damage || "",
+    damageFormula: equipmentDamageFormula(session, ref, bridge, table.damage || ""),
     effectKey: table.effectKey ? `${table.effectKey}.effect` : "",
     showFollow: false,   // player BI has no follow flag — it chases by attachment.
     following: false,
@@ -574,6 +622,8 @@ function buildDamageBox(app, session, target) {
     ref,
     name: target.name,
     amount: Math.max(0, Number(app._lastDamage) || 0),
+    sourceName: app._lastDamageSource?.sourceName || "",
+    canDestroy: game.user.isGM && kind !== "runner",
   };
 }
 
@@ -582,6 +632,35 @@ function buildDamageBox(app, session, target) {
 /* ------------------------------------------------------------------ */
 
 export function activateListeners(app, html) {
+  html.find('[data-action="content-apply-effect"]').on("click", async ev => {
+    if (!game.user.isGM) return;
+    const effect = selectedContent(app)?.effects?.[Number(ev.currentTarget.dataset.index)];
+    const target = getWorld("session")?.targets?.[game.user.id] || "";
+    if (!target.startsWith("runner:") || !effect || ["manual", "destroy"].includes(effect.type)) return;
+    let sourceRef = app.state.selection || "";
+    if (sourceRef.startsWith("runner:")) {
+      const runner = resolveRunnerRef(sourceRef);
+      const programId = runner?.part?.lastProgramUse?.programId;
+      if (programId) sourceRef = `prog:${runner.pid}:${programId}`;
+    }
+    const result = await mutate("equipment.effect", { pid: target.slice(7), effect: effect.type, sourceRef });
+    if (result?.error) ui.notifications.warn(loc(result.error));
+  });
+  html.find('[data-action="target-special-effect"]').on("click", ev => {
+    const pid = ev.currentTarget.dataset.targetRef?.slice(7);
+    if (!game.user.isGM || !pid) return;
+    const effects = ["ignite", "forceJackOut", "randomDestroy", "randomNonIce", "raven", "emp", "disableDeck", "clear"];
+    new Dialog({ title: loc("CRNS.Equipment.ApplyEffect"),
+      content: `<select name="effect">${effects.map(key => `<option value="${key}">${esc(loc(`CRNS.Equipment.Effects.${key}`))}</option>`).join("")}</select>`,
+      buttons: { apply: { label: loc("CRNS.Equipment.ApplyEffect"), callback: async dialog => {
+        const result = await mutate("equipment.effect", { pid, effect: dialog.find('[name="effect"]').val(), sourceRef: app.state.selection || "" });
+        if (result?.error) ui.notifications.warn(loc(result.error));
+      } }, cancel: { label: loc("CRNS.Equipment.Close") } }, default: "cancel" }).render(true);
+  });
+  html.find('[data-action="clear-runner-effect"]').on("click", ev => {
+    if (!game.user.isGM) return;
+    mutate("equipment.clearEffect", { pid: ev.currentTarget.dataset.pid, key: ev.currentTarget.dataset.key });
+  });
   /* ---- action-bar resize handle (Task A) ---- */
   wireBarResize(app, html);
 
@@ -676,16 +755,23 @@ export function activateListeners(app, html) {
     const actor = game.actors?.get(el.dataset.actorId);
     if (!actor) return;
     const entry = (app._pendingDefense || []).find((d) => d.id === testId);
+    if (!entry || app._rollingDefense?.has(testId)) return;
+    app._rollingDefense ||= new Set();
+    app._rollingDefense.add(testId);
     // Program-defence prompt (item 2): roll the PROGRAM's "def" execution
     // (Interface + program DEF + 1d10) — the standard cyberdeck program def roll,
     // dialog + LUCK available — instead of the runner's Interface defence.
     const programId = entry?.progDefense?.programId || "";
-    const roll = programId
+    let roll;
+    try { roll = programId
       ? await bridge.rollProgram(actor, programId, "def", ev.originalEvent || ev)
-      : await bridge.rollInterface(actor, "defense", ev.originalEvent || ev);
+      : await bridge.rollInterface(actor, "defense", ev.originalEvent || ev); }
+    finally { app._rollingDefense.delete(testId); }
     if (!roll) return; // cancelled — leave the prompt pending.
+    if (!(app._pendingDefense || []).some(d => d.id === testId)) return;
     notifyClients({
       kind: "defenseResult",
+      defenseId: entry.id,
       pid,
       attackerName: entry?.attackerName || "",
       attackerTotal: entry?.attackerTotal || 0,
@@ -694,6 +780,7 @@ export function activateListeners(app, html) {
       defenderName: programId ? (entry?.progName || "") : "",
       // Attacker program (Requirement 3): the GM derezzes it on a miss.
       attackerProg: entry?.attackerProg || null,
+      targetRef: entry?.targetRef || "",
     });
     app._pendingDefense = (app._pendingDefense || []).filter((d) => d.id !== testId);
     app.render(false);
@@ -722,28 +809,73 @@ export function activateListeners(app, html) {
     const pid = el.dataset.pid;
     const actorId = el.dataset.actorId;
     const ability = el.dataset.ability;
-    const free = el.dataset.free === "true";
+    if (el.dataset.blocked === "true" && !(game.user.isGM && ev.shiftKey)) return;
+    let free = el.dataset.free === "true";
     const actor = game.actors?.get(actorId);
     if (!actor) return;
 
-    const shift = !!ev.shiftKey;
-    const spend = !free && !shift; // Defence/Speed are free; Shift skips the spend.
-
-    if (spend) {
-      const part = participantById(pid);
-      if ((part?.actions?.value ?? 0) < 1) { ui.notifications.warn(loc("CRNS.Errors.NoActions")); return; }
-      await mutate("run.spend", { pid, n: 1 });
+    if (participantById(pid)?.netEffects?.deckDisabled) { ui.notifications.warn(loc("CRNS.Equipment.DeckDisabled")); return; }
+    const profile = equipmentProfile(actor, bridge.getDeck(actor));
+    let rolls = 1, scout = false;
+    if (ability === "cloak" && profile.swiftyClean) {
+      const equipment = await mutate("equipment.action", { pid, action: "swifty" });
+      if (!equipment?.ok) { ui.notifications.warn(loc(equipment?.error || "CRNS.Equipment.SwiftyUsed")); return; }
+      free = true; rolls = 2;
+    } else if (ability === "pathfinder" && (getWorld("session") || {}).equipment?.[pid]?.scoutPending
+      && (participantById(pid)?.scoutActionSerial || 0) === ((getWorld("session") || {}).equipment?.[pid]?.scoutSerial || 0)) {
+      free = true; scout = true;
     }
-    const roll = await bridge.rollInterface(actor, ability, ev.originalEvent || ev);
-    if (!roll) return;
+
+    const shift = !!ev.shiftKey && game.user.isGM;
+    const spend = !free && !shift && ability !== "slide" && ability !== "virus";
+    let destination = null;
+    let slideTargetRef = "";
+    if (ability === "slide") {
+      const session = getWorld("session") || {};
+      destination = await pickSlideDestination(session, pid);
+      if (destination === null) return;
+      slideTargetRef = session.targets?.[game.user.id] || "";
+    }
+    if (ability === "virus") {
+      let part = participantById(pid);
+      if (!part?.virusWork && game.user.isGM) {
+        const config = await configureVirus();
+        if (!config) return;
+        const configured = await mutate("run.virusConfigure", { pid, ...config });
+        if (configured !== true) { if (configured?.error) ui.notifications.warn(loc(configured.error)); return; }
+      }
+      const res = await mutate("run.virusSpend", { pid });
+      if (!res?.ok) { if (res?.error) ui.notifications.warn(loc(res.error)); return; }
+      if (!res.ready) { ui.notifications.info(loc("CRNS.Rules.VirusProgress", { n: res.remaining })); return; }
+    }
+    const beforeRoll = async () => {
+      let res = true;
+      if (scout) {
+        res = await mutate("equipment.action", { pid, action: "scout" });
+        if (res?.error) ui.notifications.warn(loc(res.error));
+        return res?.ok === true;
+      }
+      if (ability === "scanner") {
+        res = await mutate("run.scanner", { pid });
+        if (res === true) ui.notifications.info(loc("CRNS.Rules.ScannerMeat"));
+      } else if (ability === "slide") res = await mutate("run.slideAttempt", { pid, targetRef: slideTargetRef, destination });
+      else if (spend) res = await mutate("run.spend", { pid, n: 1 });
+      if (res?.error) ui.notifications.warn(loc(res.error));
+      return res === true;
+    };
+    let roll = await bridge.rollInterface(actor, ability, ev.originalEvent || ev, beforeRoll);
+    if (rolls === 2) {
+      const second = await bridge.rollInterface(actor, ability, ev.originalEvent || ev);
+      if (second && (!roll || Number(second.resultTotal) > Number(roll.resultTotal))) roll = second;
+    }
+    if (!roll) { if (rolls === 2) await mutate("equipment.action", { pid, action: "swiftyCancel" }); return; }
 
     // Slide is an opposed roll vs the targeted ICE — arch ICE (ice:) or a
     // player-placed Black ICE (prog:, Addendum 2) → emit the slideTest notify.
     if (ability === "slide") {
-      const session = getWorld("session") || {};
-      const testRef = (session.targets || {})[game.user.id] || "";
+      const testRef = slideTargetRef;
       if (testRef.startsWith("ice:") || testRef.startsWith("prog:")) {
-        notifyClients({ kind: "slideTest", testRef, pid, runnerTotal: Number(roll.resultTotal) || 0 });
+        notifyClients({ kind: "slideTest", testRef, pid, destination, runnerTotal: Number(roll.resultTotal) || 0 });
       }
       return;
     }
@@ -769,8 +901,7 @@ export function activateListeners(app, html) {
     if ((part?.actions?.value ?? 0) < 1) { ui.notifications.warn(loc("CRNS.Errors.NoActions")); return; }
     const floorId = await pickControlledNode(html, el);
     if (!floorId) return;
-    await mutate("run.spend", { pid, n: 1 });
-    const res = await mutate("run.nodePulse", { archId, floorId });
+    const res = await mutate("run.nodePulse", { archId, floorId, override: game.user.isGM && ev.shiftKey });
     if (res && res.error) ui.notifications.warn(loc(res.error));
   });
 
@@ -782,22 +913,10 @@ export function activateListeners(app, html) {
     if (!actor) return;
     const part = participantById(pid);
 
-    // Destroyed lockout (§10) — this program is broken; activation is blocked.
-    const session0 = getWorld("session") || {};
-    if ((session0.destroyed || {})[`${pid}|${programId}`]) {
-      ui.notifications.warn(loc("CRNS.Errors.ProgramDestroyed")); return;
-    }
-    // One rez per turn PER PROGRAM ITEM (§9) — the same item cannot be rezzed
-    // twice in one turn; other programs (incl. another copy) are unaffected.
-    if (part?.rezUsedIds?.[programId]) { ui.notifications.warn(loc("CRNS.Errors.AlreadyRezzed")); return; }
-    if ((part?.actions?.value ?? 0) < 1) { ui.notifications.warn(loc("CRNS.Errors.NoActions")); return; }
-
-    // Player Black-ICE deploy flow (SPEC §14.12): trap vs deployed.
     if (cls === "blackice") { await activateBlackIce(app, part, pid, actor, programId); return; }
-
-    await mutate("run.spend", { pid, n: 1 });
-    const ok = await bridge.rezProgram(actor, programId);
-    if (ok) await mutate("run.markRez", { pid, programId }); // this item's rez used up this turn.
+    if (ATTACKER_CLASSES.has(cls)) { await attackProgram(app, pid, actor, programId, ev); return; }
+    const res = await mutate("run.activateProgram", { pid, programId, override: game.user.isGM && ev.shiftKey });
+    if (res?.error) ui.notifications.warn(loc(res.error));
   });
 
   html.find('[data-action="program-deactivate"]').on("click", async (ev) => {
@@ -814,9 +933,8 @@ export function activateListeners(app, html) {
       if (!canDerezTrap(session, pid, programId)) { ui.notifications.warn(loc("CRNS.Errors.TrapDerezFloor")); return; }
     }
 
-    await mutate("run.spend", { pid, n: 1 });
-    await bridge.derezProgram(actor, programId);
-    if (cls === "blackice") await mutate("run.setRezzed", { pid, programId, state: null });
+    const res = await mutate("run.deactivateProgram", { pid, programId, override: game.user.isGM && ev.shiftKey });
+    if (res?.error) ui.notifications.warn(loc(res.error));
   });
 
   // Program rolls: atk / def / damage.
@@ -826,19 +944,32 @@ export function activateListeners(app, html) {
     const { pid, actorId, programId, exec, isAttacker } = el.dataset;
     const actor = game.actors?.get(actorId);
     if (!actor) return;
-    const roll = await bridge.rollProgram(actor, programId, exec, ev.originalEvent || ev);
+    const session = getWorld("session") || {};
+    if (session.defeated?.[`${pid}|${programId}`] || session.destroyed?.[`${pid}|${programId}`]) return;
+    if (participantById(pid)?.netEffects?.deckDisabled) { ui.notifications.warn(loc("CRNS.Equipment.DeckDisabled")); return; }
+    if (exec === "atk" && isAttacker === "true") { await attackProgram(app, pid, actor, programId, ev); return; }
+    const ps = session.progState?.[`${pid}|${programId}`];
+    const backingActor = ps?.actorId ? game.actors?.get(ps.actorId) : null;
+    if (backingActor && backingActor.system?.stats?.rez?.value <= 0) return;
+    const program = actor.getOwnedItem?.(programId);
+    if (exec === "atk" && program?.system?.class === "blackice" && (program.system.blackIceType === "antiprogram"
+      || (!program.system.blackIceType && !bridge.programDefinition?.(program) && BLACK_ICE[blackIceTypeForName(program.name)]?.tgt === "P"))) {
+      const storedTarget = ps?.targetRef || session.targets?.[game.user.id] || "";
+      const targetPid = storedTarget.startsWith("runner:") ? storedTarget.slice(7) : storedTarget.startsWith("prog:") ? parseProgRef(storedTarget).pid : "";
+      const candidates = targetPid ? activeProgramRefs(session, targetPid, program) : [];
+      if (!candidates.length) { ui.notifications.warn(loc("CRNS.Rules.NoActiveProgram")); return; }
+      const target = candidates[Math.floor(Math.random() * candidates.length)];
+      if (session.targets?.[game.user.id] !== target) await mutate("session.setTarget", { entityRef: target });
+    }
+    const roll = backingActor && exec === "damage"
+      ? await bridge.rollEntityDamage(backingActor, equipmentDamageFormula(session, `prog:${pid}:${programId}`, bridge, el.dataset.formula || BLACK_ICE[blackIceTypeForName(program?.name)]?.damage || program?.system?.damage?.standard || "1d6"), ev.originalEvent || ev)
+      : backingActor && (exec === "atk" || exec === "def")
+      ? await bridge.rollEntityStat(backingActor, exec, ev.originalEvent || ev)
+      : await bridge.rollProgram(actor, programId, exec, ev.originalEvent || ev);
     if (!roll) return;
 
     if (exec === "damage") {
-      stashDamage(app, roll);
-      // Attacker-class programs auto-deactivate after a damage roll (no cost).
-      // Idempotent: derezProgram no-ops when the program is already derezzed
-      // (e.g. a miss already derezzed it), so no double card / no error.
-      if (isAttacker === "true") {
-        const wasRezzed = !!actor.getOwnedItem?.(programId)?.system?.isRezzed;
-        await bridge.derezProgram(actor, programId);
-        if (wasRezzed) ui.notifications.info(loc("CRNS.Actions.AttackerDerez", { name: actor.name }));
-      }
+      stashDamage(app, roll, programSource(pid, actor.getOwnedItem?.(programId)));
       app.render(false);
     }
     if (exec === "atk") {
@@ -856,13 +987,25 @@ export function activateListeners(app, html) {
     const el = ev.currentTarget;
     const actor = game.actors?.get(el.dataset.actorId);
     if (!actor) return;
+    if ((actor.system?.stats?.rez?.value ?? 1) <= 0) return;
+    const session = getWorld("session") || {};
+    let targetRef = session.targets?.[game.user.id] || "";
+    if (el.dataset.stat === "atk" && (actor.system?.class === "antiprogram" || (!actor.system?.class && !bridge.programDefinition?.(actor) && BLACK_ICE[blackIceTypeForName(actor.name)]?.tgt === "P"))) {
+      const selected = app.state.selection || "";
+      const [, , , iceId] = selected.split(":");
+      const progKey = selected.startsWith("prog:") ? selected.slice(5).replace(":", "|") : "";
+      const attachment = (session.attachments || []).find((a) => progKey ? a.progKey === progKey : a.iceId === iceId);
+      const targetPid = attachment?.pid || (targetRef.startsWith("runner:") ? targetRef.slice(7) : targetRef.startsWith("prog:") ? parseProgRef(targetRef).pid : "");
+      const candidates = targetPid ? activeProgramRefs(session, targetPid, actor) : [];
+      if (!candidates.length) { ui.notifications.warn(loc("CRNS.Rules.NoActiveProgram")); return; }
+      targetRef = candidates[Math.floor(Math.random() * candidates.length)];
+      if (session.targets?.[game.user.id] !== targetRef) await mutate("session.setTarget", { entityRef: targetRef });
+    }
     const roll = await bridge.rollEntityStat(actor, el.dataset.stat, ev.originalEvent || ev);
     // A GM ICE ATTACK against a targeted PLAYER runner triggers that player's
     // defence prompt (SPEC Addendum 2) — same rollRequest contract as demon Zap.
     if (roll && el.dataset.stat === "atk") {
-      const session = getWorld("session") || {};
-      const targetRef = (session.targets || {})[game.user.id] || "";
-      if (targetRef.startsWith("runner:")) {
+      if (targetRef) {
         notifyClients({
           kind: "rollRequest",
           targetRef,
@@ -881,7 +1024,7 @@ export function activateListeners(app, html) {
     const actor = game.actors?.get(el.dataset.actorId);
     if (!actor) return;
     const roll = await bridge.rollEntityDamage(actor, el.dataset.formula, ev.originalEvent || ev);
-    if (roll) { stashDamage(app, roll); app.render(false); }
+    if (roll) { stashDamage(app, roll, entitySource(app, actor)); app.render(false); }
   });
 
   html.find('[data-action="entity-effect"]').on("click", (ev) => {
@@ -893,16 +1036,14 @@ export function activateListeners(app, html) {
     const el = ev.currentTarget;
     const actor = game.actors?.get(el.dataset.actorId);
     if (!actor) return;
-    if (!(await spendDemonAction(el.dataset.actorId))) return;
-    bridge.rollDemonStatic(actor, Number(el.dataset.cn) || 0);
+    await bridge.rollEntityStat(actor, "combatNumber", ev.originalEvent || ev, () => spendDemonAction(actor.id));
   });
 
   html.find('[data-action="demon-action"]').on("click", async (ev) => {
     ev.preventDefault();
     const actor = game.actors?.get(ev.currentTarget.dataset.actorId);
     if (!actor) return;
-    if (!(await spendDemonAction(ev.currentTarget.dataset.actorId))) return;
-    await bridge.rollEntityStat(actor, "interface", ev.originalEvent || ev);
+    await bridge.rollEntityStat(actor, "interface", ev.originalEvent || ev, () => spendDemonAction(actor.id));
   });
 
   // Demon Zap (SPEC §14.8): attack roll 1d10+Interface posted as an attack; if a
@@ -912,8 +1053,7 @@ export function activateListeners(app, html) {
     const actorId = ev.currentTarget.dataset.actorId;
     const actor = game.actors?.get(actorId);
     if (!actor) return;
-    if (!(await spendDemonAction(actorId))) return;
-    const roll = await bridge.rollEntityStat(actor, "interface", ev.originalEvent || ev);
+    const roll = await bridge.rollEntityStat(actor, "interface", ev.originalEvent || ev, () => spendDemonAction(actorId));
     if (!roll) return;
     const session = getWorld("session") || {};
     const targetRef = (session.targets || {})[game.user.id] || "";
@@ -979,7 +1119,9 @@ export function activateListeners(app, html) {
     const input = box?.querySelector('input[name="dmgamount"]');
     const amount = Math.max(0, Number(input?.value) || 0);
     const ref = ev.currentTarget.dataset.targetRef || "";
-    applyTargetDamage(ref, amount);
+    const source = { ...(app._lastDamageSource || {}) };
+    if (game.user.isGM && box?.querySelector('[name="destroyprogram"]')?.checked) source.effect = "destroy";
+    applyTargetDamage(ref, amount, source);
   });
 }
 
@@ -999,6 +1141,7 @@ const BAR_DEFAULT = 290; // px default (matches the CSS fallback)
  *  no flicker); persists the final height to a per-client user flag on release
  *  (debounced). Double-click resets to the default by clearing the flag. */
 function wireBarResize(app, html) {
+  app._barResizeCleanup?.();
   const handle = html.find('[data-action="bar-resize"]')[0];
   if (!handle) return;
   const root = html.filter(".crns-root")[0] || html.find(".crns-root")[0];
@@ -1023,6 +1166,7 @@ function wireBarResize(app, html) {
     dragging = false;
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
     document.body.classList.remove("crns-resizing");
     persistBarHeight(curH);
   };
@@ -1038,7 +1182,15 @@ function wireBarResize(app, html) {
     document.body.classList.add("crns-resizing");
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
+  app._barResizeCleanup = () => {
+    dragging = false;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    document.body.classList.remove("crns-resizing");
+  };
 
   // Double-click → reset to default (clear the flag + drop the inline var).
   handle.addEventListener("dblclick", (ev) => {
@@ -1049,6 +1201,10 @@ function wireBarResize(app, html) {
 }
 
 let _barHeightTimer = null;
+export function cleanup(app) {
+  app._barResizeCleanup?.(); app._barResizeCleanup = null;
+  if (_barHeightTimer) { clearTimeout(_barHeightTimer); _barHeightTimer = null; }
+}
 /** Debounced persist of the action-bar height to a per-client user flag. */
 function persistBarHeight(px) {
   if (_barHeightTimer) clearTimeout(_barHeightTimer);
@@ -1083,8 +1239,7 @@ async function spendDemonAction(actorId) {
   const session = getWorld("session") || {};
   const state = (session.demonState || {})[actorId];
   if (state && (state.value || 0) < 1) { ui.notifications.warn(loc("CRNS.Errors.NoActions")); return false; }
-  await mutate("demon.spend", { actorId, n: 1 });
-  return true;
+  return await mutate("demon.spend", { actorId, n: 1 }) === true;
 }
 
 /** Player Black-ICE activate flow (SPEC §14.12, reworked per §13): a current
@@ -1094,17 +1249,64 @@ async function spendDemonAction(actorId) {
 async function activateBlackIce(app, part, pid, actor, programId) {
   const session = getWorld("session") || {};
   const targetRef = (session.targets || {})[game.user.id] || "";
-  const hasTarget = targetRef && !targetRef.startsWith("prog:");
-
-  await mutate("run.spend", { pid, n: 1 });
-  const ok = await bridge.rezProgram(actor, programId);
-  if (!ok) return;
-  await mutate("run.markRez", { pid, programId }); // this item's rez used up this turn (§9).
-  await mutate("run.setRezzed", { pid, programId, state: { rezzed: true } });
-  const res = hasTarget
-    ? await mutate("run.progDeploy", { pid, programId, mode: "deployed", targetRef })
-    : await mutate("run.progDeploy", { pid, programId, mode: "trap", floorIndex: part?.floorIndex || 0 });
+  const res = await mutate("run.activateProgram", { pid, programId, mode: targetRef ? "deployed" : "trap", targetRef });
   if (res && res.error) ui.notifications.warn(loc(res.error));
+}
+
+async function attackProgram(app, pid, actor, programId, ev) {
+  const session = getWorld("session") || {};
+  const targetRef = session.targets?.[game.user.id] || "";
+  const res = await mutate("run.activateProgram", { pid, programId, targetRef, override: game.user.isGM && ev.shiftKey });
+  if (!res?.ok) { if (res?.error) ui.notifications.warn(loc(res.error)); return; }
+  let roll = null;
+  const source = programSource(pid, actor.getOwnedItem?.(programId));
+  try {
+    roll = await bridge.rollProgram(actor, programId, "atk", ev.originalEvent || ev);
+    if (roll) await maybeAutoRoll(app, roll, actor, "atk", "program", { attackerProg: { pid, programId, isAttacker: true, activationId: res.activationId }, targetRef });
+  } finally {
+    await mutate("run.applyProgramEffect", { pid, programId, activationId: res.activationId, cancelled: !roll, ...source });
+  }
+  app.render(false);
+}
+
+function pickSlideDestination(session, pid) {
+  const choices = slideDestinations(session, pid);
+  if (!choices.length) { ui.notifications.warn(loc("CRNS.Rules.InvalidSlide")); return Promise.resolve(null); }
+  if (choices.length === 1) return Promise.resolve(choices[0].floorIndex);
+  return new Promise((resolve) => {
+    const buttons = Object.fromEntries(choices.map((d) => [`floor${d.floorIndex}`, { label: esc(d.label), callback: () => resolve(d.floorIndex) }]));
+    new Dialog({ title: loc("CRNS.Rules.SlideDestination"), content: "", buttons, close: () => resolve(null) }).render(true);
+  });
+}
+
+function configureVirus() {
+  return new Promise((resolve) => new Dialog({
+    title: loc("CRNS.Rules.VirusSetup"),
+    content: `<label>${esc(loc("CRNS.Rules.VirusDV"))}<input name="virusdv" type="number" min="0" value="10"></label><label>${esc(loc("CRNS.Rules.VirusActions"))}<input name="virusactions" type="number" min="1" value="1"></label>`,
+    buttons: { save: { label: loc("CRNS.Actions.ApplyDamage"), callback: (html) => resolve({ dv: Number(html.find('[name="virusdv"]').val()), actions: Number(html.find('[name="virusactions"]').val()) }) } },
+    close: () => resolve(null),
+  }).render(true));
+}
+
+function programSource(pid, program) {
+  const custom = bridge.programDefinition?.(program);
+  return {
+    sourceRef: `prog:${pid}:${program?.id || ""}`,
+    sourceName: program?.name || "",
+    sourceProgram: { id: program?.id, name: program?.name, class: program?.system?.class },
+    isBlackIce: program?.system?.class === "blackice",
+    effect: (custom ? custom.effects.some(e => e.type === "destroy") : ["dragon", "killer", "sabertooth"].includes(blackIceTypeForName(program?.name))) ? "destroy" : "",
+  };
+}
+
+function entitySource(app, actor) {
+  const custom = bridge.programDefinition?.(actor);
+  return {
+    sourceRef: app.state.selection || "",
+    sourceName: actor.name,
+    isBlackIce: actor.type === "blackIce",
+    effect: (custom ? custom.effects.some(e => e.type === "destroy") : ["dragon", "killer", "sabertooth"].includes(blackIceTypeForName(actor.name))) ? "destroy" : "",
+  };
 }
 
 /** Small popover listing a runner's controlled nodes; resolves to a floorId or
@@ -1130,24 +1332,24 @@ function pickControlledNode(html, anchorEl) {
 }
 
 /** Stash a roll's final total for the "apply damage" box. */
-function stashDamage(app, roll) {
+function stashDamage(app, roll, source = {}) {
   const total = Number(roll?.resultTotal);
-  if (Number.isFinite(total)) app._lastDamage = total;
+  if (Number.isFinite(total)) { app._lastDamage = total; app._lastDamageSource = source; }
 }
 
 /** Apply damage from the "damage → target" box to the resolved entity. */
-function applyTargetDamage(ref, amount) {
+function applyTargetDamage(ref, amount, options = {}) {
   const [kind] = (ref || "").split(":");
   if (kind === "ice" || kind === "demon") {
     const r = resolveIceRef(ref);
-    if (r?.actor) mutate("ent.damage", { actorId: r.actor.id, amount });
+    if (r?.actor) return mutate("ent.damage", { actorId: r.actor.id, amount, ...options });
   } else if (kind === "prog") {
     const { pid, programId } = parseProgRef(ref);
-    mutate("run.progDamage", { pid, programId, amount });
+    return mutate("run.progDamage", { pid, programId, amount, ...options });
   } else if (kind === "runner") {
     // GM-only: brain damage straight to the netrunner's HP (op re-checks GM).
     const pid = ref.slice("runner:".length);
-    if (pid) mutate("runner.damage", { pid, amount });
+    if (pid) return mutate("runner.damage", { pid, amount, ...options });
   }
 }
 
@@ -1188,7 +1390,7 @@ async function maybeAutoRoll(app, roll, actor, ability, source, opts = {}) {
   // player-owned runners get the defence prompt in their own action bar. GM
   // attacks (acting for NPC runners, demon Zap, etc.) flow the same way.
   const session = getWorld("session") || {};
-  const targetRef = (session.targets || {})[game.user.id] || "";
+  const targetRef = opts.targetRef || (session.targets || {})[game.user.id] || "";
   if (!targetRef) return;
 
   const total = Number(roll.resultTotal) || 0;

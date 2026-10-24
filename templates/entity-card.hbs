@@ -1,7 +1,7 @@
 {{!-- Shared ICE/Demon/prog chip partial. `ent` is one entity view-model. --}}
-<div class="crns-chip{{#if ent.isDemon}} demon{{/if}}{{#if ent.isProgram}} prog{{/if}}{{#if ent.isTrap}} trap{{/if}}{{#if ent.isDeployed}} deployed{{/if}}{{#if ent.derezzed}} derezzed{{/if}}{{#if ent.selected}} selected{{/if}}{{#if ent.selectable}} selectable{{/if}}"
+<div class="crns-chip{{#if ent.isCurrentTurn}} crns-current-turn{{/if}}{{#if ent.used}} crns-program-used{{/if}}{{#if ent.isDemon}} demon{{/if}}{{#if ent.isProgram}} prog{{/if}}{{#if ent.isTrap}} trap{{/if}}{{#if ent.isDeployed}} deployed{{/if}}{{#if ent.derezzed}} derezzed{{/if}}{{#if ent.selected}} selected{{/if}}{{#if ent.selectable}} selectable{{/if}}"
      data-entity-ref="{{ent.ref}}"{{#if ent.actorId}} data-actor-id="{{ent.actorId}}"{{/if}}{{#if ent.isDeployed}} data-deploy-target="{{ent.targetRef}}"{{/if}}{{#if ent.gmDraggable}} draggable="true"{{/if}}
-     {{#if ent.tip}}title="{{ent.tip}}"{{/if}}>
+     {{#if ent.tip}}title="{{ent.name}}" data-net-tooltip="{{ent.tip}}"{{/if}}>
   <div class="crns-chip-portrait">
     <img src="{{ent.img}}" alt="{{ent.name}}" />
     {{#if ent.derezzed}}<i class="fas fa-xmark crns-chip-x"></i>{{/if}}
@@ -10,6 +10,11 @@
   </div>
   <div class="crns-chip-body">
     <div class="crns-chip-name">{{#if ent.code}}<span class="crns-chip-code">{{ent.code}}</span> {{/if}}{{ent.name}}</div>
+    {{#if ent.isCurrentTurn}}<span class="crns-turn-badge"><i class="fas fa-play"></i> {{localize "CRNS.View.turn"}}</span>{{/if}}
+    {{#if ent.used}}<span class="crns-used-badge" title="{{localize "CRNS.View.usedHint"}}"><i class="fas fa-check"></i> {{localize "CRNS.View.used"}}</span>{{/if}}
+    {{#if ent.isDemon}}
+    <div class="crns-demon-status">{{#if ent.derezzed}}{{localize "CRNS.Canvas.DemonDerezzed"}}{{else}}{{localize "CRNS.Canvas.DemonRezzed"}}{{/if}}</div>
+    {{/if}}
     <div class="crns-chip-rez">
       <div class="crns-rez-bar"><span style="width:{{ent.rezPct}}%"></span></div>
       <span class="crns-rez-val">{{ent.rez}}/{{ent.rezMax}}</span>

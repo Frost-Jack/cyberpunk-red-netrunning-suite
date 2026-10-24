@@ -7,8 +7,12 @@
  * on all clients — no manual refresh fan-out is needed for data changes.
  */
 
-import { MODULE_ID, SOCKET_NAME, uid, loc, BLACK_ICE, DEMONS, FLOOR_KINDS, MAX_ICE_PER_FLOOR, maxDemons } from "./constants.js";
+import { MODULE_ID, SOCKET_NAME, uid, loc, BLACK_ICE, DEMONS, FLOOR_KINDS, MAX_ICE_PER_FLOOR, maxDemons, blackIceTypeForName } from "./constants.js";
 import * as bridge from "./cpr-bridge.js";
+import { topology, pathfinderFloors } from "./topology.js";
+import { contentOperation } from "./custom-content.js";
+import { equipmentProfile, validateEquipmentLoadout } from "./equipment.js";
+import { netActionBonus, onEquipmentJackIn, onEquipmentJackOut, onEquipmentTurn, beforeEquipmentDestroy, afterEquipmentDestroy, equipmentIceStats, equipmentBrainDamage, queueArmor, equipmentAction, equipmentProtection } from "./equipment-runtime.js";
 
 const FLOOR_KINDS_SET = new Set(FLOOR_KINDS);
 
@@ -16,6 +20,7 @@ const FLOOR_KINDS_SET = new Set(FLOOR_KINDS);
 export const WORLD_OBJECTS = {
   netTree: [],
   treeState: {},
+  customContent: {},
   netArchs: {},
   // Current entity REZ lives on the backing blackIce/demon Actor, not here.
   session: {
@@ -24,12 +29,14 @@ export const WORLD_OBJECTS = {
     // Round-2 (SPEC §14):
     floorState: {},    // "<archId>:<floorId>" -> FloorFx (breach/virus/control/eyedee)
     cloaks: {},        // "<archId>" -> [{id, n, pid, dv}]  — arch-level cloak markers (Addendum 6)
-    reveal: {},        // "<pid>" -> { "<archId>": maxVisibleFloorIndex }  (pathfinder fog of war)
+    reveal: {},        // "<pid>" -> { "<archId>": floorIds[] | legacy maxVisibleFloorIndex }
     slid: [],          // [{archId, iceId|progKey, pid}] — ICE this runner slid past (never re-attaches)
     attachments: [],   // [{archId, iceId|progKey, pid}] — ICE following a player's runner
     demonState: {},    // "<actorId>" -> { value, max }  — demon NET-action counter
     progState: {},     // "<pid>|<programId>" -> { mode:"trap"|"deployed", targetRef, floorIndex }
-    destroyed: {},     // "<pid>|<programId>" -> true  — programs destroyed (REZ→0) this run (locked out until GM restore / owner disconnect)
+    destroyed: {},     // Explicit destruction, distinct from defeat at 0 REZ.
+    defeated: {},
+    programUsage: {},  // actor UUID -> { round, ids }; survives reconnects.
   },
 };
 
@@ -57,10 +64,10 @@ export function isPrimaryGM() {
 /* Pending player-side mutation requests awaiting the GM's result. */
 const _pendingMutations = new Map(); // requestId -> resolve
 
-/** Mutate shared world data. GMs apply locally; players relay to the GM and
+/** Mutate shared world data. The primary GM applies locally; other users relay
  *  await the GM's result over the socket (10s timeout -> null). */
 export async function mutate(op, payload = {}) {
-  if (game.user.isGM) {
+  if (isPrimaryGM()) {
     return applyOp(op, payload, game.user.id);
   }
   const gm = primaryGM();
@@ -68,25 +75,25 @@ export async function mutate(op, payload = {}) {
     ui.notifications.warn(game.i18n.localize("CRNS.Errors.NoGm"));
     return false;
   }
-  const requestId = foundry.utils.randomID(10);
+  const requestId = foundry.utils.randomID(16);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       if (_pendingMutations.delete(requestId)) resolve(null);
     }, 10000);
-    _pendingMutations.set(requestId, (result) => {
+    _pendingMutations.set(requestId, { gmId: gm.id, resolve: (result) => {
       clearTimeout(timer);
       resolve(result);
-    });
+    } });
     game.socket.emit(SOCKET_NAME, { action: "mutate", op, payload, userId: game.user.id, requestId });
   });
 }
 
 /** Called by the socket router when the GM reports a mutation result. */
-export function resolveMutation(requestId, result) {
-  const resolve = _pendingMutations.get(requestId);
-  if (!resolve) return;
+export function resolveMutation(requestId, result, gmId) {
+  const pending = _pendingMutations.get(requestId);
+  if (!pending || pending.gmId !== gmId) return;
   _pendingMutations.delete(requestId);
-  resolve(result);
+  pending.resolve(result);
 }
 
 /* ------------------------------------------------------------------ */
@@ -136,6 +143,11 @@ export function isPlayerRunner(part) {
   return !!user && !user.isGM;
 }
 
+/** A player runner currently available as a spectator's point of view. */
+export function isSpectatableRunner(part, archs) {
+  return isPlayerRunner(part) && !!part.archId && part.jackedIn !== false && !!archs?.[part.archId];
+}
+
 /** Arch ids that currently hold at least one PLAYER-owned runner (SPEC §13). */
 export function playerRunnerArchIds(session) {
   const ids = new Set();
@@ -149,7 +161,7 @@ export function playerRunnerArchIds(session) {
  *  (falls back to the stored max, else 2, when the actor can't be resolved). */
 function participantActionMax(part) {
   const actor = part?.actorUuid ? (fromUuidSync?.(part.actorUuid) ?? null) : null;
-  if (actor) return bridge.netActionsMax(bridge.getInterfaceRank(actor));
+  if (actor) return bridge.netActionsMax(bridge.getInterfaceRank(actor)) + netActionBonus(actor);
   return part?.actions?.max ?? 2;
 }
 
@@ -175,11 +187,148 @@ function refActorId(ref) {
   return def?.actorId || "";
 }
 
+/** Damage requires an acting runner on the target's floor; spectators cannot act. */
+function canDamageTarget(session, ref, userId) {
+  const [kind, a, floorId, entityId] = String(ref || "").split(":");
+  let archId = "", floorIndex = -1;
+  if (kind === "ice" || kind === "demon") {
+    const arch = (getWorld("netArchs") || {})[a];
+    archId = a;
+    floorIndex = (arch?.floors || []).findIndex((f) => f.id === floorId);
+    if (!entityId || !refActorId(ref)) return false;
+  } else if (kind === "prog") {
+    const owner = session.participants?.[a];
+    if (!owner?.archId || owner.jackedIn === false || !activeProgramRefs(session, a).includes(ref)) return false;
+    archId = owner.archId;
+    floorIndex = Number(session.progState?.[`${a}|${floorId}`]?.floorIndex ?? owner.floorIndex ?? 0);
+  } else return false;
+  return floorIndex >= 0 && Object.values(session.participants || {}).some((p) => p.kind === "runner"
+    && p.jackedIn !== false && p.archId === archId && Number(p.floorIndex || 0) === floorIndex && ownsParticipant(p, userId));
+}
+
 /** Clamp a damage amount to a whole number in 1..500. NaN → 0 (no-op damage). */
 function clampDamage(amount) {
   const n = Math.trunc(Number(amount));
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(500, n));
+}
+
+export function roundKey(part = {}) {
+  return game.combat?.started ? `${game.combat.id}:${game.combat.round}` : `manual:${part.roundSerial || 0}`;
+}
+
+export function turnKey(part = {}) {
+  return game.combat?.started ? `${roundKey(part)}:${game.combat.turn}` : `manual:${part.turnSerial || 0}`;
+}
+
+export function combatantMatchesActor(combatant, actorUuid, actorId) {
+  if (!combatant || (!actorUuid && !actorId)) return false;
+  if (actorUuid && combatant.actor?.uuid === actorUuid) return true;
+  return !!actorId && (!actorUuid || actorUuid === `Actor.${actorId}`)
+    && (combatant.actorId || combatant.actor?.id) === actorId;
+}
+
+export function programUsed(session, part, programId) {
+  const usage = session.programUsage?.[part.actorUuid];
+  return usage?.round === roundKey(part) && !!usage.ids?.[programId];
+}
+
+function rememberProgram(session, part, programId) {
+  session.programUsage ||= {};
+  let usage = session.programUsage[part.actorUuid];
+  if (!usage || usage.round !== roundKey(part)) usage = session.programUsage[part.actorUuid] = { round: roundKey(part), ids: {} };
+  usage.ids[programId] = true;
+  part.rezUsedIds = usage.ids;
+}
+
+function spendNet(part, n = 1, override = false) {
+  if (override) return true;
+  if (part.netEffects?.deckDisabled) return { error: "CRNS.Equipment.DeckDisabled" };
+  if (part.meatActionTurn === turnKey(part)) return { error: "CRNS.Rules.MeatActionUsed" };
+  if (!Number.isInteger(n) || n < 1 || (part.actions?.value || 0) < n) return { error: "CRNS.Errors.NoActions" };
+  part.actions.value -= n;
+  part.scoutActionSerial = (part.scoutActionSerial || 0) + 1;
+  part.netActionTurn = turnKey(part);
+  return true;
+}
+
+function programName(program) {
+  const custom = bridge.programDefinition?.(program);
+  if (custom) return `custom:${custom.id}`;
+  const raw = String(program?.name || "").toLowerCase().replace(/[\s-]/g, "");
+  for (const key of ["Superglue", "Armor", "Flak", "Shield"]) {
+    if ([key, loc(`CRNS.Program.${key}.name`)].some((n) => String(n).toLowerCase().replace(/[\s-]/g, "") === raw)) return key.toLowerCase();
+  }
+  return raw;
+}
+
+export function activeProgramRefs(session, pid, source = null) {
+  const part = session.participants?.[pid];
+  const custom = source ? bridge.programDefinition?.(source) : null;
+  const actor = part?.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  return (bridge.installedPrograms(bridge.getDeck(actor)) || []).filter((p) => {
+    const key = `${pid}|${p.id}`;
+    if (!p.system?.isRezzed || session.destroyed?.[key] || session.defeated?.[key]) return false;
+    if (custom && !custom.targets.includes(p.system.class === "blackice" ? "blackIce" : "program")) return false;
+    const ps = session.progState?.[key];
+    if (p.system.class === "blackice" && ps && Number(ps.floorIndex) !== Number(part.floorIndex || 0)) return false;
+    const rez = ps?.actorId ? game.actors.get(ps.actorId)?.system?.stats?.rez?.value : p.system.rez?.value;
+    return !(Number(p.system.rez?.max) > 0 && Number(rez) <= 0);
+  }).map((p) => `prog:${pid}:${p.id}`);
+}
+
+function isAntiProgram(actor, type = "") {
+  const nativeClass = actor?.type === "blackIce" ? actor?.system?.class : actor?.system?.blackIceType;
+  if (["antiprogram", "antipersonnel", "other"].includes(nativeClass)) return nativeClass === "antiprogram";
+  if (bridge.programDefinition?.(actor)) return false;
+  return BLACK_ICE[type || blackIceTypeForName(actor?.name)]?.tgt === "P"
+    || actor?.system?.blackIceType === "antiprogram";
+}
+
+export function slideDestinations(session, pid) {
+  const part = session.participants?.[pid];
+  const arch = (getWorld("netArchs") || {})[part?.archId];
+  const graph = topology(arch);
+  if (graph.error) return [];
+  const from = part.floorIndex || 0;
+  return arch.floors.flatMap((f, i) => {
+    const adjacent = graph.parents[from] === i || graph.parents[i] === from;
+    const blocked = graph.parents[i] === from && isBlockingPasswordFloor(session, part.archId, arch.floors[from]);
+    return adjacent && !blocked ? [{ floorIndex: i, label: `${i + 1}. ${f.label || loc(`CRNS.Floor.${f.kind}`)}` }] : [];
+  });
+}
+
+function destroysProgram({ sourceRef = "", sourceName = "", sourceProgram = null, effect = "" } = {}, callerId) {
+  if (effect === "destroy" && requesterIsGM(callerId)) return true;
+  let actor = game.actors?.get(refActorId(sourceRef));
+  if (sourceRef.startsWith("prog:")) {
+    const [, pid, id] = sourceRef.split(":");
+    const part = (getWorld("session") || {}).participants?.[pid];
+    actor = part?.actorUuid ? fromUuidSync(part.actorUuid)?.getOwnedItem?.(id) : null;
+  }
+  const type = blackIceTypeForName(actor?.name || (requesterIsGM(callerId) ? sourceName || sourceProgram?.name : ""));
+  const custom = bridge.programDefinition?.(actor);
+  if (custom) return custom.effects.some(e => e.type === "destroy");
+  return ["dragon", "killer", "sabertooth"].includes(type);
+}
+
+async function defeatProgram(session, pid, programId, source, callerId) {
+  if (destroysProgram(source, callerId)) {
+    const destroyed = await autoDerezDestroyedProg(session, pid, programId, source);
+    if (destroyed) { await afterEquipmentDestroy(session, source?.sourceRef, bridge); return true; }
+  }
+  const key = `${pid}|${programId}`;
+  session.defeated ||= {};
+  session.defeated[key] = true;
+  const part = session.participants?.[pid];
+  const owner = part?.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  const item = owner?.getOwnedItem?.(programId);
+  if (item) queueArmor(session, pid, owner, item);
+  if (item) await item.update({ "system.rez.value": 0 });
+  if (owner) await bridge.setProgramDefeated(owner, programId, true);
+  pruneProgBiSideEffects(session, session.progState?.[key]?.actorId, key);
+  postChatCard(loc("CRNS.Rules.Derezzed"), item?.name || "");
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,12 +451,73 @@ function pruneProgBiSideEffects(session, actorId, progKey) {
   let changed = false;
   if (actorId && prunePendingTests(session, (t) => t.iceActorId === actorId)) changed = true;
   if (progKey) {
+    const ref = `prog:${progKey.replace("|", ":")}`;
+    for (const [userId, target] of Object.entries(session.targets || {})) {
+      if (target === ref) { delete session.targets[userId]; changed = true; }
+    }
+    for (const st of Object.values(session.progState || {})) {
+      if (st.targetRef === ref) { st.targetRef = ""; changed = true; }
+    }
     if (pruneAttachments(session, (a) => a.progKey === progKey)) changed = true;
     const sBefore = (session.slid || []).length;
     session.slid = (session.slid || []).filter((s) => s.progKey !== progKey);
     if ((session.slid || []).length !== sBefore) changed = true;
   }
   return changed;
+}
+
+/** Drop references to a runner leaving the current run, including in-flight rolls. */
+function clearRunnerReferences(session, pid) {
+  for (const fx of Object.values(session.floorState || {})) if (fx?.control?.pid === pid) fx.control = null;
+  const archId = session.participants?.[pid]?.archId;
+  if (archId && !Object.entries(session.participants || {}).some(([otherPid, part]) => otherPid !== pid
+    && part.kind === "runner" && part.archId === archId && part.jackedIn !== false)) {
+    for (const [key, fx] of Object.entries(session.floorState || {})) {
+      if (key.startsWith(`${archId}:`)) { fx.breached = false; fx.control = null; }
+    }
+  }
+  const matches = (ref) => ref === `runner:${pid}` || (typeof ref === "string" && ref.startsWith(`prog:${pid}:`));
+  for (const [userId, ref] of Object.entries(session.targets || {})) if (matches(ref)) delete session.targets[userId];
+  for (const st of Object.values(session.progState || {})) if (matches(st.targetRef)) st.targetRef = "";
+  prunePendingTests(session, (t) => t.pid === pid || matches(t.ref) || matches(t.targetRef));
+  pruneAttachments(session, (a) => a.pid === pid);
+  session.slid = (session.slid || []).filter((s) => s.pid !== pid);
+  const part = session.participants?.[pid];
+  if (part) { part.slideAttempt = null; part.activations = {}; }
+  if (part?.userId && session.targets) delete session.targets[part.userId];
+}
+
+/** Remove exact document refs after a core document deletion, without touching other documents. */
+function pruneDeletedRefs(session, refs) {
+  for (const [userId, ref] of Object.entries(session.targets || {})) if (refs.has(ref)) delete session.targets[userId];
+  for (const state of Object.values(session.progState || {})) if (refs.has(state.targetRef)) state.targetRef = "";
+  for (const part of Object.values(session.participants || {})) if (refs.has(part.slideAttempt?.targetRef)) part.slideAttempt = null;
+  prunePendingTests(session, test => refs.has(test.ref) || refs.has(test.targetRef));
+}
+
+async function clearDeletedProgram(session, pid, programId, { derez = false, forgetUsage = false } = {}) {
+  const part = session.participants?.[pid];
+  const owner = part?.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  const program = owner?.getOwnedItem?.(programId);
+  if (derez && program?.system?.isRezzed && !await bridge.derezProgram(owner, programId)) return false;
+  const key = `${pid}|${programId}`;
+  const actorId = session.progState?.[key]?.actorId;
+  await deleteProgActors(session, pid, programId);
+  if (part?.rezzed) delete part.rezzed[programId];
+  if (part?.activations) delete part.activations[programId];
+  if (session.progState) delete session.progState[key];
+  if (session.progFloors) delete session.progFloors[key];
+  if (session.defeated) delete session.defeated[key];
+  if (forgetUsage) {
+    if (session.destroyed) delete session.destroyed[key];
+    if (part?.runUsedIds) delete part.runUsedIds[programId];
+    if (part?.rezUsedIds) delete part.rezUsedIds[programId];
+    const usage = session.programUsage?.[part?.actorUuid];
+    if (usage?.ids) delete usage.ids[programId];
+  }
+  pruneProgBiSideEffects(session, actorId, key);
+  pruneDeletedRefs(session, new Set([`prog:${pid}:${programId}`]));
+  return true;
 }
 
 /** All backing prog-ICE actorIds for a participant's progState (SPEC §14.12 /
@@ -355,7 +565,7 @@ async function deleteProgActors(session, pid, programId = null) {
  *  the progState/progFloors entry + the owner's rezzed mirror, and prune the
  *  reaction side-effects (pendingTests/attachments/slid) it provoked. Mutates
  *  `session` in place (caller persists). GM-side only. Returns true if it acted. */
-async function autoDerezDestroyedProg(session, pid, programId) {
+async function autoDerezDestroyedProg(session, pid, programId, source = {}) {
   const part = (session.participants || {})[pid];
   if (!part) return false;
   const progKey = `${pid}|${programId}`;
@@ -363,7 +573,10 @@ async function autoDerezDestroyedProg(session, pid, programId) {
 
   // Derez the program item on the owner's actor (GM client owns everything).
   const owner = part.actorUuid ? (fromUuidSync?.(part.actorUuid) ?? null) : null;
+  if (!await beforeEquipmentDestroy(session, pid, programId, owner, bridge, { ...source, random: source?.random })) return false;
   if (owner) await bridge.derezProgram(owner, programId);
+  if (session.defeated) delete session.defeated[progKey];
+  postDestroyedCard(owner?.getOwnedItem?.(programId)?.name || "");
 
   // Delete the backing prog-ICE actor (read progState BEFORE clearing it).
   await deleteProgActors(session, pid, programId);
@@ -566,6 +779,9 @@ async function triggerFloorIce(session, archId, pid) {
 
   const queuedActorIds = [];
   for (const { def, actor } of aliveIceOnFloor(floor)) {
+    const programTargets = activeProgramRefs(session, pid, actor);
+    const antiProgram = isAntiProgram(actor, def.type);
+    if (antiProgram && !programTargets.length) continue;
     // Skip ICE ALREADY ATTACHED to THIS runner: the attack-of-opportunity happens
     // once, at first contact. Attached ICE move together with the runner (follow
     // logic), so without this every step would re-provoke them. Slid ICE and ICE
@@ -583,6 +799,8 @@ async function triggerFloorIce(session, archId, pid) {
         ref,
         iceActorId: def.actorId,
         iceName: actor?.name || def.type,
+        targetRef: antiProgram ? programTargets[Math.floor(Math.random() * programTargets.length)] : `runner:${pid}`,
+        antiProgram,
         ts: Date.now(),
       });
       changed = true;
@@ -594,7 +812,7 @@ async function triggerFloorIce(session, archId, pid) {
     // Auto-attach the ICE to a player's runner (SPEC §14.11): follow enabled on
     // the actor (default true), not already slid past by this pid, and not
     // already attached to this pid.
-    if (playerRunner) {
+    if (playerRunner || antiProgram) {
       const follow = actor?.getFlag?.(MODULE_ID, "follow");
       if (follow === false) continue;
       const isSlid = session.slid.some((s) => s.archId === archId && s.iceId === def.id && s.pid === pid);
@@ -611,6 +829,9 @@ async function triggerFloorIce(session, archId, pid) {
   // (Addendum 2). Skip a trap owned by the moving runner itself.
   for (const trap of aliveTrapProgsOnFloor(session, archId, part.floorIndex || 0)) {
     if (trap.ownerPid === pid) continue;
+    const programTargets = activeProgramRefs(session, pid, trap.actor);
+    const antiProgram = isAntiProgram(trap.actor);
+    if (antiProgram && !programTargets.length) continue;
     const iceName = trap.actor?.name || loc("CRNS.Actions.KindIce");
     const ref = `prog:${trap.progKey.replace("|", ":")}`; // prog:<ownerPid>:<programId>
     const alreadyAttachedProg = session.attachments
@@ -622,6 +843,8 @@ async function triggerFloorIce(session, archId, pid) {
       session.pendingTests.push({
         id: uid("st"), pid, ref,
         iceActorId: trap.actorId, iceName, ts: Date.now(),
+        targetRef: antiProgram ? programTargets[Math.floor(Math.random() * programTargets.length)] : `runner:${pid}`,
+        antiProgram,
       });
       changed = true;
       const queued = await moveToTopOfQueue(trap.actorId);
@@ -752,13 +975,15 @@ function defaultFloor() {
 function validateArchCaps(arch) {
   const floors = arch?.floors || [];
   if (!floors.length) return "CRNS.Errors.MinFloor";
+  const topologyError = topology(arch).error;
+  if (topologyError) return topologyError;
   let demonCount = 0;
   for (const floor of floors) {
     const ice = floor.ice || [];
     if (ice.length > MAX_ICE_PER_FLOOR) return "CRNS.Errors.TooManyIce";
-    for (const i of ice) if (!BLACK_ICE[i.type]) return "CRNS.Errors.UnknownIce";
+    for (const i of ice) if (!BLACK_ICE[i.type] && !bridge.archContent?.(i, "blackIce")) return "CRNS.Errors.UnknownIce";
     if (floor.demon) {
-      if (!DEMONS[floor.demon.type]) return "CRNS.Errors.UnknownDemon";
+      if (!DEMONS[floor.demon.type] && !bridge.archContent?.(floor.demon, "demon")) return "CRNS.Errors.UnknownDemon";
       demonCount += 1;
     }
   }
@@ -775,10 +1000,11 @@ async function disconnectArchParticipants(session, archId) {
   const progActorIds = [];
   for (const [pid, p] of Object.entries(parts)) {
     if (p.archId !== archId) continue;
+    clearRunnerReferences(session, pid);
     affected.add(pid);
     if (p.kind === "spectator") delete parts[pid];
     else {
-      p.archId = ""; p.floorIndex = 0; p.jackedIn = false; p.maxFloor = 0;
+      p.archId = ""; p.floorIndex = 0; p.jackedIn = false; p.maxFloor = 0; p.visitedFloorIds = [];
       progActorIds.push(...progActorIdsForPid(session, pid));
       clearProgFloors(session, pid);
       clearProgState(session, pid);
@@ -838,16 +1064,20 @@ async function reconcileArchActors(oldArch, newArch) {
   for (const floor of newArch.floors || []) {
     const ice = floor.ice || [];
     for (const def of ice) {
-      if (def.actorId && game.actors?.get(def.actorId)) { keptIds.add(def.actorId); continue; }
-      const actorId = await bridge.createIceActor(def.type, archName);
+      if (oldIds.has(def.actorId) && game.actors?.get(def.actorId)) { keptIds.add(def.actorId); continue; }
+      const content = bridge.archContent?.(def, "blackIce");
+      if (content) def.content = content;
+      const actorId = await bridge.createIceActor(def.type, archName, content);
       def.actorId = actorId || "";
       if (actorId) keptIds.add(actorId);
     }
     if (floor.demon) {
       const def = floor.demon;
-      if (def.actorId && game.actors?.get(def.actorId)) { keptIds.add(def.actorId); }
+      if (oldIds.has(def.actorId) && game.actors?.get(def.actorId)) { keptIds.add(def.actorId); }
       else {
-        const actorId = await bridge.createDemonActor(def.type, archName);
+        const content = bridge.archContent?.(def, "demon");
+        if (content) def.content = content;
+        const actorId = await bridge.createDemonActor(def.type, archName, content);
         def.actorId = actorId || "";
         if (actorId) keptIds.add(actorId);
       }
@@ -866,6 +1096,9 @@ async function reconcileArchActors(oldArch, newArch) {
  *   Phase D: run.*
  */
 const OPS = {
+  async "content.save"(payload, userId) { return contentOperation("content.save", payload, userId, bridge); },
+  async "content.delete"(payload, userId) { return contentOperation("content.delete", payload, userId, bridge); },
+  async "content.createDocument"(payload, userId) { return contentOperation("content.createDocument", payload, userId, bridge); },
   /* ---- diagnostics ---- */
   async ping({ echo } = {}, userId) {
     return { pong: true, echo: echo ?? null, gm: requesterIsGM(userId) };
@@ -876,6 +1109,7 @@ const OPS = {
   async "tree.createFolder"({ parentId = "", name } = {}, userId) {
     if (!requesterIsGM(userId)) return false;
     const tree = getWorld("netTree") || [];
+    if (parentId && findNode(tree, parentId)?.type !== "folder") return false;
     tree.push({ id: uid("nd"), type: "folder", name: name || loc("CRNS.Tree.NewFolder"), parentId: parentId || "" });
     await setWorld("netTree", tree);
     return true;
@@ -883,11 +1117,12 @@ const OPS = {
 
   async "tree.createArch"({ parentId = "", name } = {}, userId) {
     if (!requesterIsGM(userId)) return false;
+    const tree = getWorld("netTree") || [];
+    if (parentId && findNode(tree, parentId)?.type !== "folder") return false;
     const archName = name || loc("CRNS.Tree.Untitled");
     const archId = uid("a");
     const archs = getWorld("netArchs") || {};
     archs[archId] = { id: archId, name: archName, floors: [defaultFloor()] };
-    const tree = getWorld("netTree") || [];
     tree.push({ id: uid("nd"), type: "arch", name: archName, parentId: parentId || "", archId });
     await setWorld("netArchs", archs);
     await setWorld("netTree", tree);
@@ -1017,17 +1252,54 @@ const OPS = {
     archs[archId] = newArch;
     await setWorld("netArchs", archs);
 
-    // Reconcile the live session against the new floor set: clamp participant
-    // positions and drop stale ice:/demon: targets that no longer resolve.
+    // Preserve live positions and fog by floor identity, not display order.
     const session = getWorld("session") || {};
     const floors = newArch.floors || [];
     const floorById = new Set(floors.map((f) => f.id));
     let sessionChanged = false;
 
+    const oldFloors = oldArch.floors || [];
+    const oldGraph = topology(oldArch);
+    const entryIndex = topology(newArch).parents.indexOf(null);
+    const remapIndex = (index) => {
+      let oldIndex = Number(index) || 0;
+      while (oldFloors[oldIndex]) {
+        const next = floors.findIndex((f) => f.id === oldFloors[oldIndex].id);
+        if (next >= 0) return next;
+        if (oldGraph.parents[oldIndex] === null || oldGraph.error) break;
+        oldIndex = oldGraph.parents[oldIndex];
+      }
+      return entryIndex;
+    };
+    const legacy = oldFloors.every((f) => !Object.hasOwn(f, "parentId"));
     for (const p of Object.values(session.participants || {})) {
       if (p.archId !== archId) continue;
-      const clamped = Math.max(0, Math.min(floors.length - 1, Number(p.floorIndex) || 0));
-      if (clamped !== p.floorIndex) { p.floorIndex = clamped; sessionChanged = true; }
+      const visited = Array.isArray(p.visitedFloorIds) ? p.visitedFloorIds : [];
+      const oldVisited = legacy ? oldFloors.filter((f, i) => i <= Math.max(Number(p.maxFloor) || 0, Number(p.floorIndex) || 0)).map((f) => f.id) : [];
+      p.floorIndex = remapIndex(p.floorIndex);
+      p.visitedFloorIds = [...new Set([...visited, ...oldVisited, floors[p.floorIndex].id])].filter((id) => floorById.has(id));
+      p.maxFloor = Math.max(...p.visitedFloorIds.map((id) => floors.findIndex((f) => f.id === id)));
+      sessionChanged = true;
+    }
+    for (const rp of Object.values(session.reveal || {})) {
+      if (!Object.hasOwn(rp, archId)) continue;
+      const reveal = rp[archId];
+      const ids = Array.isArray(reveal) ? reveal : legacy && Number.isFinite(reveal)
+        ? oldFloors.filter((f, i) => i <= reveal).map((f) => f.id) : [];
+      rp[archId] = ids.filter((id) => floorById.has(id));
+      sessionChanged = true;
+    }
+    for (const [key, st] of Object.entries(session.progState || {})) {
+      const ownerPid = key.slice(0, key.lastIndexOf("|"));
+      if (session.participants?.[ownerPid]?.archId !== archId) continue;
+      st.floorIndex = remapIndex(st.floorIndex);
+      sessionChanged = true;
+    }
+    for (const key of Object.keys(session.progFloors || {})) {
+      const ownerPid = key.slice(0, key.lastIndexOf("|"));
+      if (session.participants?.[ownerPid]?.archId !== archId) continue;
+      session.progFloors[key] = remapIndex(session.progFloors[key]);
+      sessionChanged = true;
     }
 
     for (const [uid_, ref] of Object.entries(session.targets || {})) {
@@ -1057,9 +1329,10 @@ const OPS = {
     // Prune round-2 state against the new floor/ice set.
     const liveIceIds = new Set();
     for (const f of floors) for (const i of f.ice || []) if (i.id) liveIceIds.add(i.id);
-    if (pruneAttachments(session, (a) => a.archId === archId && !liveIceIds.has(a.iceId))) sessionChanged = true;
+    const liveReaction = (a) => a.progKey ? !!session.progState?.[a.progKey] : liveIceIds.has(a.iceId);
+    if (pruneAttachments(session, (a) => a.archId === archId && !liveReaction(a))) sessionChanged = true;
     const slidBefore = (session.slid || []).length;
-    session.slid = (session.slid || []).filter((s) => s.archId !== archId || liveIceIds.has(s.iceId));
+    session.slid = (session.slid || []).filter((s) => s.archId !== archId || liveReaction(s));
     if (session.slid.length !== slidBefore) sessionChanged = true;
     if (session.floorState) {
       for (const key of Object.keys(session.floorState)) {
@@ -1088,25 +1361,29 @@ const OPS = {
     const archs = getWorld("netArchs") || {};
     const src = archs[archId];
     if (!src) return false;
+    const topologyError = topology(src).error;
+    if (topologyError) return { error: topologyError };
     const tree = getWorld("netTree") || [];
     const srcNode = tree.find((n) => n.type === "arch" && n.archId === archId);
 
     const newId = uid("a");
     const newName = `${src.name} ${loc("CRNS.Tree.CopySuffix")}`;
     const copy = { id: newId, name: newName, floors: [] };
+    const floorIds = new Map(src.floors.map((f) => [f.id, uid("f")]));
 
     for (const floor of src.floors || []) {
       const nf = {
-        id: uid("f"), kind: floor.kind, label: floor.label || "",
+        id: floorIds.get(floor.id), kind: floor.kind, label: floor.label || "",
         dv: floor.dv, description: floor.description || "", ice: [], demon: null,
       };
+      if (Object.hasOwn(floor, "parentId")) nf.parentId = floor.parentId === "" ? "" : floorIds.get(floor.parentId);
       for (const i of floor.ice || []) {
         const actorId = i.actorId ? await bridge.duplicateEntityActor(i.actorId, newName) : "";
-        nf.ice.push({ id: uid("i"), type: i.type, actorId: actorId || "" });
+        nf.ice.push({ id: uid("i"), type: i.type, actorId: actorId || "", ...(i.content ? { content: i.content } : {}) });
       }
       if (floor.demon) {
         const actorId = floor.demon.actorId ? await bridge.duplicateEntityActor(floor.demon.actorId, newName) : "";
-        nf.demon = { id: uid("d"), type: floor.demon.type, actorId: actorId || "" };
+        nf.demon = { id: uid("d"), type: floor.demon.type, actorId: actorId || "", ...(floor.demon.content ? { content: floor.demon.content } : {}) };
       }
       copy.floors.push(nf);
     }
@@ -1120,41 +1397,51 @@ const OPS = {
 
   async "arch.import"({ parentId = "", arch } = {}, userId) {
     if (!requesterIsGM(userId)) return false;
+    const tree = getWorld("netTree") || [];
+    if (parentId && findNode(tree, parentId)?.type !== "folder") return false;
     if (!arch || !Array.isArray(arch.floors)) return { error: "CRNS.Errors.BadImport" };
+    const topologyError = topology(arch).error;
+    if (topologyError) return { error: topologyError };
 
     const newId = uid("a");
     const newName = (typeof arch.name === "string" && arch.name.trim()) || loc("CRNS.Tree.Untitled");
     const clean = { id: newId, name: newName, floors: [] };
+    const floorIds = new Map(arch.floors.map((f) => [f.id, uid("f")]));
 
     for (const floor of arch.floors) {
       const kind = FLOOR_KINDS_SET.has(floor?.kind) ? floor.kind : "custom";
       const nf = {
-        id: uid("f"), kind, label: typeof floor?.label === "string" ? floor.label : "",
+        id: floorIds.get(floor.id), kind, label: typeof floor?.label === "string" ? floor.label : "",
         dv: Number.isFinite(Number(floor?.dv)) ? Number(floor.dv) : 0,
         description: typeof floor?.description === "string" ? floor.description : "",
         ice: [], demon: null,
       };
+      if (Object.hasOwn(floor, "parentId")) nf.parentId = floor.parentId === "" ? "" : floorIds.get(floor.parentId);
       const srcIce = Array.isArray(floor?.ice) ? floor.ice.slice(0, MAX_ICE_PER_FLOOR) : [];
       for (const i of srcIce) {
-        if (!BLACK_ICE[i?.type]) continue;
-        const actorId = await bridge.createIceActor(i.type, newName);
-        if (actorId && i.actorData) await bridge.applyActorOverrides(actorId, i.actorData);
-        nf.ice.push({ id: uid("i"), type: i.type, actorId: actorId || "" });
+        const content = bridge.archContent?.(i, "blackIce");
+        if (!BLACK_ICE[i?.type] && !content) continue;
+        nf.ice.push({ id: uid("i"), type: i.type, actorId: "", ...(content ? { content } : {}) });
       }
-      if (floor?.demon && DEMONS[floor.demon.type]) {
-        const actorId = await bridge.createDemonActor(floor.demon.type, newName);
-        if (actorId && floor.demon.actorData) await bridge.applyActorOverrides(actorId, floor.demon.actorData);
-        nf.demon = { id: uid("d"), type: floor.demon.type, actorId: actorId || "" };
+      if (floor?.demon && (DEMONS[floor.demon.type] || bridge.archContent?.(floor.demon, "demon"))) {
+        const content = bridge.archContent?.(floor.demon, "demon");
+        nf.demon = { id: uid("d"), type: floor.demon.type, actorId: "", ...(content ? { content } : {}) };
       }
       clean.floors.push(nf);
     }
-    if (!clean.floors.length) clean.floors.push(defaultFloor());
-
     const capErr = validateArchCaps(clean);
-    if (capErr) { await bridge.deleteEntityActors(archActorIds(clean)); return { error: capErr }; }
+    if (capErr) return { error: capErr };
+    await reconcileArchActors(null, clean);
+    for (const [index, floor] of clean.floors.entries()) {
+      const source = arch.floors[index];
+      const srcIce = (Array.isArray(source.ice) ? source.ice.slice(0, MAX_ICE_PER_FLOOR) : []).filter((i) => BLACK_ICE[i?.type] || bridge.archContent?.(i, "blackIce"));
+      for (const [i, def] of floor.ice.entries()) {
+        if (def.actorId && srcIce[i].actorData) await bridge.applyActorOverrides(def.actorId, srcIce[i].actorData);
+      }
+      if (floor.demon?.actorId && source.demon?.actorData) await bridge.applyActorOverrides(floor.demon.actorId, source.demon.actorData);
+    }
 
     const archs = getWorld("netArchs") || {};
-    const tree = getWorld("netTree") || [];
     archs[newId] = clean;
     tree.push({ id: uid("nd"), type: "arch", name: newName, parentId: parentId || "", archId: newId });
     await setWorld("netArchs", archs);
@@ -1197,6 +1484,66 @@ const OPS = {
 
   /* ---- session ---- (Phase C) */
 
+  async "session.documentDeleted"({ actorId, actorUuid, programId } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    if (actorId) {
+      if (typeof actorId !== "string" || actorUuid || programId || game.actors?.get(actorId)) return false;
+      const uuid = `Actor.${actorId}`;
+      for (const [pid, part] of Object.entries(session.participants || {})) {
+        if (part.actorUuid !== uuid) continue;
+        const programRefs = new Set(Object.keys(session.progState || {}).filter(key => key.startsWith(`${pid}|`))
+          .map(key => `prog:${key.replace("|", ":")}`));
+        pruneDeletedRefs(session, programRefs);
+        clearRunnerReferences(session, pid);
+        await deleteProgActors(session, pid);
+        clearProgState(session, pid);
+        clearProgFloors(session, pid);
+        clearDestroyed(session, pid);
+        for (const key of Object.keys(session.defeated || {})) if (key.startsWith(`${pid}|`)) delete session.defeated[key];
+        if (session.reveal) delete session.reveal[pid];
+        if (session.equipment) delete session.equipment[pid];
+        delete session.participants[pid];
+      }
+      if (session.programUsage) delete session.programUsage[uuid];
+      for (const [key, state] of Object.entries(session.progState || {})) {
+        if (state.actorId !== actorId) continue;
+        const cut = key.lastIndexOf("|");
+        if (!await clearDeletedProgram(session, key.slice(0, cut), key.slice(cut + 1), { derez: true })) return false;
+      }
+      const archs = getWorld("netArchs") || {};
+      const refs = new Set(), iceIds = new Set();
+      let archChanged = false;
+      for (const [archId, arch] of Object.entries(archs)) {
+        for (const floor of arch.floors || []) {
+          const removed = (floor.ice || []).filter(def => def.actorId === actorId);
+          for (const def of removed) { refs.add(`ice:${archId}:${floor.id}:${def.id}`); iceIds.add(`${archId}|${def.id}`); }
+          if (removed.length) { floor.ice = floor.ice.filter(def => def.actorId !== actorId); archChanged = true; }
+          if (floor.demon?.actorId === actorId) {
+            refs.add(`demon:${archId}:${floor.id}:${floor.demon.id}`);
+            floor.demon = null; archChanged = true;
+          }
+        }
+      }
+      pruneDeletedRefs(session, refs);
+      prunePendingTests(session, test => test.iceActorId === actorId);
+      pruneAttachments(session, attachment => iceIds.has(`${attachment.archId}|${attachment.iceId}`));
+      session.slid = (session.slid || []).filter(slide => !iceIds.has(`${slide.archId}|${slide.iceId}`));
+      if (session.demonState) delete session.demonState[actorId];
+      if (session.demonPrograms) delete session.demonPrograms[actorId];
+      if (archChanged) await setWorld("netArchs", archs);
+    } else {
+      if (typeof actorUuid !== "string" || !actorUuid || typeof programId !== "string" || !programId) return false;
+      const owner = fromUuidSync(actorUuid);
+      if (!owner || owner.getOwnedItem?.(programId) || owner.items?.get?.(programId)) return false;
+      for (const [pid, part] of Object.entries(session.participants || {})) {
+        if (part.actorUuid === actorUuid) await clearDeletedProgram(session, pid, programId, { forgetUsage: true });
+      }
+    }
+    await setWorld("session", session);
+    return true;
+  },
+
   async "session.connect"({ pid, actorUuid, userId = "", archId = "" } = {}, callerId) {
     if (!requesterIsGM(callerId)) return false;
     const session = getWorld("session") || {};
@@ -1204,66 +1551,86 @@ const OPS = {
 
     // Resolve the actor to recompute the NET-action maximum from Interface rank.
     const actor = actorUuid ? (fromUuidSync?.(actorUuid) ?? null) : null;
-    const max = actor ? bridge.netActionsMax(bridge.getInterfaceRank(actor)) : 2;
+    const max = actor ? bridge.netActionsMax(bridge.getInterfaceRank(actor)) + netActionBonus(actor) : 2;
 
     const prev = session.participants[pid] || {};
     const connecting = !!archId; // archId "" → roster only (not jacked in).
+    const arch = connecting ? (getWorld("netArchs") || {})[archId] : null;
+    const graph = connecting ? topology(arch) : null;
+    if (graph?.error) return { error: graph.error };
+    const entryIndex = graph ? graph.parents.indexOf(null) : 0;
     const part = {
       kind: "runner",
       userId: userId || prev.userId || "",
       actorUuid: actorUuid || prev.actorUuid || "",
       archId: archId || "",
-      floorIndex: connecting ? 0 : (prev.floorIndex || 0),
+      floorIndex: connecting ? entryIndex : (prev.floorIndex || 0),
       jackedIn: connecting,
       // On connect, actions reset to max minus 1 (Jack In costs 1 action).
       actions: connecting ? { value: Math.max(0, max - 1), max } : (prev.actions || { value: max, max }),
       rezzed: prev.rezzed || {},
       // Fog-of-war baseline: deepest floor visited (reset to 0 on a fresh connect).
-      maxFloor: connecting ? 0 : (prev.maxFloor || 0),
+      maxFloor: connecting ? entryIndex : (prev.maxFloor || 0),
+      visitedFloorIds: connecting ? [arch.floors[entryIndex].id] : [],
       // One-rez-per-turn allowance (§9) — reset on a fresh connect.
-      rezUsedIds: connecting ? {} : (prev.rezUsedIds || {}),
+      rezUsedIds: prev.rezUsedIds || {},
+      roundSerial: prev.roundSerial || 0,
+      turnSerial: prev.turnSerial || 0,
+      runUsedIds: connecting && prev.jackedIn === false ? {} : (prev.runUsedIds || {}),
+      slideTurn: prev.slideTurn,
+      slideCount: prev.slideCount,
+      scoutActionSerial: prev.scoutActionSerial || 0,
+      lastCombatTurn: prev.lastCombatTurn,
+      meatActionTurn: prev.meatActionTurn,
+      netActionTurn: prev.netActionTurn,
     };
     session.participants[pid] = part;
-    // Connecting places the runner on floor 0 — provoke any Black ICE there.
+    if (connecting && !prev.jackedIn && actor) await onEquipmentJackIn(session, pid, actor, bridge);
+    if (connecting && session.reveal?.[pid]) delete session.reveal[pid];
+    // Connecting places the runner at the tree entry; provoke Black ICE there.
     if (connecting) await triggerFloorIce(session, archId, pid);
     await setWorld("session", session);
     return true;
   },
 
-  async "session.spectate"({ userId, archId = "" } = {}, callerId) {
+  async "session.spectate"({ userId, archId = "", followPid = "" } = {}, callerId) {
     const session = getWorld("session") || {};
-    session.participants = session.participants || {};
-
+    const parts = session.participants = session.participants || {};
     const isGM = requesterIsGM(callerId);
-    const self = callerId === userId;
-
-    // Self-service spectating is gated by settings.
+    if ((!isGM && callerId !== userId) || !game.users.get(userId)) return false;
+    const ownSpectators = Object.entries(parts).filter(([, p]) => p.kind === "spectator" && p.userId === userId);
+    // Legacy empty-arch requests leave spectating without touching a runner.
+    if (!archId) {
+      for (const [pid] of ownSpectators) delete parts[pid];
+      await setWorld("session", session);
+      return true;
+    }
+    const archs = getWorld("netArchs") || {};
+    const activeInArch = (p) => p?.archId === archId && isSpectatableRunner(p, archs);
+    if (followPid ? !activeInArch(parts[followPid]) : !Object.values(parts).some(activeInArch)) {
+      return { error: "CRNS.Errors.SpectatorUnavailable" };
+    }
     if (!isGM) {
-      if (!self) return false;
       let allow = false, freeMove = false;
       try { allow = !!game.settings.get(MODULE_ID, "allowSpectators"); } catch (e) { /* noop */ }
       try { freeMove = !!game.settings.get(MODULE_ID, "spectatorFreeMove"); } catch (e) { /* noop */ }
-      if (!allow) return false;
-      const pidSelf = `user:${userId}`;
-      const cur = session.participants[pidSelf];
-      const curArch = cur?.archId || "";
-      // May move freely, or may join/leave only from an unset arch.
-      if (!freeMove && curArch !== "") return false;
-      // Target arch must currently hold at least one PLAYER-owned runner
-      // (self-service only) — spectating follows players, not GM/NPC runners.
-      if (archId) {
-        const hasPlayer = Object.values(session.participants)
-          .some((p) => p.archId === archId && isPlayerRunner(p));
-        if (!hasPlayer) return false;
+      if (!allow) return { error: "CRNS.Errors.SpectatorsDisabled" };
+      const current = ownSpectators.find(([, p]) => archs[p.archId] && (p.followPid
+        ? parts[p.followPid]?.archId === p.archId && isSpectatableRunner(parts[p.followPid], archs)
+        : Object.values(parts).some((r) => r.archId === p.archId && isSpectatableRunner(r, archs))))?.[1];
+      if (!freeMove && current?.archId && current.archId !== archId) {
+        return { error: "CRNS.Errors.SpectatorSwitchLocked" };
       }
     }
 
-    const pid = `user:${userId}`;
-    session.participants[pid] = {
+    const pid = ownSpectators[0]?.[0] || (parts[`user:${userId}`] ? uid("watch") : `user:${userId}`);
+    for (const [otherPid] of ownSpectators) if (otherPid !== pid) delete parts[otherPid];
+    parts[pid] = {
       kind: "spectator",
       userId,
       actorUuid: "",
       archId: archId || "",
+      followPid: followPid || "",
       floorIndex: 0,
       jackedIn: false,
     };
@@ -1277,14 +1644,16 @@ const OPS = {
     const part = parts[pid];
     if (!part) return false;
     if (!requesterIsGM(callerId) && !ownsParticipant(part, callerId)) return false;
+    clearRunnerReferences(session, pid);
 
     if (part.kind === "spectator") delete parts[pid];
     else {
-      part.archId = ""; part.floorIndex = 0; part.jackedIn = false; part.maxFloor = 0;
+      const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+      if (actor && part.jackedIn !== false) await onEquipmentJackOut(session, pid, actor, bridge, { safe: false });
+      part.archId = ""; part.floorIndex = 0; part.jackedIn = false; part.maxFloor = 0; part.visitedFloorIds = [];
       await deleteProgActors(session, pid); // delete backing prog-ICE actors first.
       clearProgFloors(session, pid);
       clearProgState(session, pid);
-      clearDestroyed(session, pid); // end of the run → the lockout is lifted (§10).
       prunePendingTests(session, (t) => t.pid === pid);
       // Drop this runner's ICE attachments (SPEC §14.11).
       pruneAttachments(session, (a) => a.pid === pid);
@@ -1305,29 +1674,32 @@ const OPS = {
     if (!isGM && !ownsParticipant(part, callerId)) return false;
 
     const archs = getWorld("netArchs") || {};
-    const floors = archs[part.archId]?.floors || [];
+    const arch = archs[part.archId];
+    const floors = arch?.floors || [];
     if (!floors.length) return false;
+    const graph = topology(arch);
+    if (graph.error) return { error: graph.error };
 
     const from = Math.max(0, Math.min(floors.length - 1, Number(part.floorIndex) || 0));
-    let dest = Math.max(0, Math.min(floors.length - 1, Number(floorIndex) || 0));
+    const dest = Number(floorIndex);
+    if (!Number.isInteger(dest) || !floors[dest]) return { error: "CRNS.Errors.MoveStep" };
 
-    // Movement gating for non-GM movers (SPEC §14.7):
-    //  - only ±1 floor steps;
-    //  - cannot move DEEPER past an un-breached password floor (moving ONTO it
-    //    is allowed; going beyond it is not).
+    // Owners walk tree edges. GM placement remains unrestricted.
     if (!isGM) {
-      if (Math.abs(dest - from) > 1) return { error: "CRNS.Errors.MoveStep" };
-      if (dest > from) {
-        // Any un-breached password floor strictly BETWEEN from and dest blocks
-        // it. Moving one step (dest = from+1) can only land ONTO such a floor,
-        // which is allowed; but if `from` itself is a blocking password floor
-        // the runner may not step deeper off it.
-        if (isBlockingPasswordFloor(session, part.archId, floors[from]) && dest > from) {
-          return { error: "CRNS.Errors.PasswordBlocked" };
-        }
+      if (dest !== from && graph.parents[from] !== dest && graph.parents[dest] !== from) return { error: "CRNS.Errors.MoveStep" };
+      if (graph.parents[dest] === from && isBlockingPasswordFloor(session, part.archId, floors[from])) {
+        return { error: "CRNS.Errors.PasswordBlocked" };
       }
     }
 
+    const visited = new Set(part.visitedFloorIds || []);
+    if (floors.every((f) => !Object.hasOwn(f, "parentId"))) {
+      floors.forEach((f, i) => { if (i <= Math.max(Number(part.maxFloor) || 0, from)) visited.add(f.id); });
+    }
+    visited.add(floors[from].id);
+    visited.add(floors[dest].id);
+    part.visitedFloorIds = [...visited];
+    if (dest !== from) part.scoutActionSerial = (part.scoutActionSerial || 0) + 1;
     part.floorIndex = dest;
     // Track the deepest floor the runner has visited (fog-of-war baseline §14.7).
     part.maxFloor = Math.max(Number(part.maxFloor) || 0, dest);
@@ -1373,7 +1745,7 @@ const OPS = {
   /* ---- ent ---- (Phase C) — operate on the backing blackIce/demon actors
    *   via bridge.damageEntity / actor.update on the GM side */
 
-  async "ent.damage"({ actorId, amount } = {}, callerId) {
+  async "ent.damage"({ actorId, amount, sourceRef = "", sourceName = "", sourceProgram = null, effect = "", random = false } = {}, callerId) {
     const session = getWorld("session") || {};
     if (!requesterIsGM(callerId)) {
       // Non-GM: must own a participant AND their own stored target must be an
@@ -1383,6 +1755,7 @@ const OPS = {
       if (!inSession) return false;
       const myTarget = (session.targets || {})[callerId] || "";
       if (refActorId(myTarget) !== actorId || !actorId) return { error: "CRNS.Errors.NotYourTarget" };
+      if (!canDamageTarget(session, myTarget, callerId)) return { error: "CRNS.Errors.NotYourTarget" };
     }
     const dmg = clampDamage(amount);
     const ok = await bridge.damageEntity(actorId, dmg);
@@ -1394,7 +1767,6 @@ const OPS = {
     postDamageCard(targetName, dmg);
     const rez = targetActor?.system?.stats?.rez?.value ?? 1;
     if (rez <= 0) {
-      postDestroyedCard(targetName);
       // If the damaged actor backs a PLAYER Black-ICE program (deployed/trap BI),
       // run the same destruction cleanup a run.progDamage kill would — derez the
       // program item, delete the actor, lock it out (§10), prune reactions — so a
@@ -1404,9 +1776,10 @@ const OPS = {
         const cut = progKey.lastIndexOf("|");
         const pKpid = progKey.slice(0, cut);
         const pKprog = progKey.slice(cut + 1);
-        await autoDerezDestroyedProg(session, pKpid, pKprog);
+        await defeatProgram(session, pKpid, pKprog, { sourceRef, sourceName, sourceProgram, effect, random }, callerId);
         await setWorld("session", session);
       } else {
+        postChatCard(loc("CRNS.Rules.Derezzed"), targetName);
         // Derezzed arch ICE can no longer act: drop pending SPEED tests pointing
         // at it and any attachments it held.
         let changed = prunePendingTests(session, (t) => t.iceActorId === actorId);
@@ -1420,12 +1793,23 @@ const OPS = {
 
   async "ent.setRez"({ actorId, value } = {}, callerId) {
     if (!requesterIsGM(callerId)) return false;
-    return bridge.setEntityRez(actorId, value);
+    const ok = await bridge.setEntityRez(actorId, value);
+    const session = getWorld("session") || {};
+    const key = progKeyForActorId(session, actorId);
+    if (ok && key && Number(value) > 0) {
+      if (session.defeated) delete session.defeated[key];
+      const [pid, programId] = key.split("|");
+      const actor = fromUuidSync(session.participants[pid].actorUuid);
+      await actor?.getOwnedItem?.(programId)?.update({ "system.rez.value": Number(value) });
+      await bridge.setProgramDefeated(actor, programId, false);
+      await setWorld("session", session);
+    }
+    return ok;
   },
 
   async "ent.restore"({ actorId } = {}, callerId) {
     if (!requesterIsGM(callerId)) return false;
-    return bridge.restoreEntity(actorId);
+    return OPS["ent.setRez"]({ actorId, value: game.actors?.get(actorId)?.system?.stats?.rez?.max || 0 }, callerId);
   },
 
   async "ent.reset"({ archId } = {}, callerId) {
@@ -1516,6 +1900,10 @@ const OPS = {
     const session = getWorld("session") || {};
     const parts = session.participants || {};
     if (!parts[pid]) return false;
+    clearRunnerReferences(session, pid);
+    clearProgFloors(session, pid);
+    clearDestroyed(session, pid);
+    if (session.reveal) delete session.reveal[pid];
     // Delete the runner's backing prog-ICE actors before dropping it (Task 1).
     await deleteProgActors(session, pid);
     clearProgState(session, pid);
@@ -1530,9 +1918,316 @@ const OPS = {
 
   /* ---- run ---- (Phase D) */
 
+  async "equipment.action"({ pid, action, ...options } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const actor = fromUuidSync(acting.part.actorUuid);
+    if (!actor) return false;
+    const result = await equipmentAction(session, pid, action, actor, bridge, options);
+    await setWorld("session", session);
+    return result;
+  },
+
+  async "equipment.effect"({ pid, effect, sourceRef = "" } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    const part = session.participants?.[pid];
+    const actor = part?.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (!actor) return false;
+    let sourceKind = effect === "emp" ? "emp" : sourceRef.startsWith("ice:") ? "blackice" : "program";
+    if (sourceRef.startsWith("prog:")) {
+      const [, ownerPid, programId] = sourceRef.split(":");
+      const sourceOwner = session.participants?.[ownerPid]?.actorUuid ? fromUuidSync(session.participants[ownerPid].actorUuid) : null;
+      if (sourceOwner?.getOwnedItem?.(programId)?.system?.class === "blackice") sourceKind = "blackice";
+    }
+    if (equipmentProtection(actor, effect, { sourceKind })) {
+      postChatCard(actor.name, loc("CRNS.Equipment.Protected"));
+      return { ok: true, protected: true };
+    }
+    part.netEffects ||= {};
+    if (effect === "ignite") part.netEffects.fire = true;
+    else if (effect === "forceJackOut") return OPS["run.jack"]({ pid, in: false, safe: equipmentProfile(actor, bridge.getDeck(actor)).safeJackout, forced: true }, callerId);
+    else if (["randomDestroy", "randomNonIce", "raven"].includes(effect)) {
+      const list = (bridge.installedPrograms(bridge.getDeck(actor)) || []).filter(p => !session.destroyed?.[`${pid}|${p.id}`]
+        && (effect === "randomNonIce" ? p.system.class !== "blackice"
+          : effect === "raven" ? p.system.isRezzed && p.system.class === "defender" : true));
+      if (list.length) {
+        const program = list[Math.floor(Math.random() * list.length)];
+        if (effect === "raven") {
+          const [, ownerPid] = sourceRef.split(":");
+          const owner = sourceRef.startsWith("prog:") && session.participants?.[ownerPid]?.actorUuid ? fromUuidSync(session.participants[ownerPid].actorUuid) : null;
+          if (owner && equipmentProfile(owner, bridge.getDeck(owner)).aerie) {
+            if (await autoDerezDestroyedProg(session, pid, program.id, { sourceRef, random: true })) await afterEquipmentDestroy(session, sourceRef, bridge);
+          } else await defeatProgram(session, pid, program.id, {}, callerId);
+        }
+        else if (await autoDerezDestroyedProg(session, pid, program.id, { sourceRef, random: true })) await afterEquipmentDestroy(session, sourceRef, bridge);
+      }
+    } else if (["emp", "disableDeck", "destroyDeck"].includes(effect)) {
+      part.netEffects.deckDisabled = true;
+      await actor.setFlag(MODULE_ID, "deckDisabled", true);
+    } else if (effect === "clear") {
+      part.netEffects = {};
+      await actor.unsetFlag(MODULE_ID, "deckDisabled");
+    } else return false;
+    await setWorld("session", session);
+    postChatCard(actor.name, loc(`CRNS.Equipment.Effects.${effect}`));
+    return { ok: true, protected: false };
+  },
+
+  async "equipment.clearEffect"({ pid, key } = {}, callerId) {
+    if (!requesterIsGM(callerId) || !["fire", "deckDisabled"].includes(key)) return false;
+    const session = getWorld("session") || {};
+    const part = session.participants?.[pid];
+    if (!part || part.kind !== "runner") return false;
+    if (part.netEffects) delete part.netEffects[key];
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (key === "deckDisabled") await actor?.unsetFlag?.(MODULE_ID, "deckDisabled");
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "equipment.turnEnd"({ pid, key } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {}, part = session.participants?.[pid];
+    if (!part || part.equipmentEndKey === key) return false;
+    part.equipmentEndKey = key;
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (actor && part.netEffects?.fire) await bridge.damageRunnerHp(actor.id, 2);
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "equipment.recordDeath"({ actorUuid, eventId } = {}, callerId) {
+    if (!requesterIsGM(callerId) || !eventId) return false;
+    const session = getWorld("session") || {};
+    const victim = Object.values(session.participants || {}).find(p => p.actorUuid === actorUuid && p.jackedIn && p.archId);
+    if (!victim) return false;
+    session.recordedDeaths ||= [];
+    if (session.recordedDeaths.includes(eventId)) return false;
+    session.recordedDeaths.push(eventId);
+    session.recordedDeaths = session.recordedDeaths.slice(-100);
+    for (const [pid, part] of Object.entries(session.participants || {})) {
+      if (!part.jackedIn || part.archId !== victim.archId || part.actorUuid === actorUuid) continue;
+      const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+      if (!actor || !equipmentProfile(actor, bridge.getDeck(actor)).combatRecorder) continue;
+      session.equipment ||= {}; session.equipment[pid] ||= {};
+      const state = session.equipment[pid]; state.recordings ||= [];
+      state.recordings.push({ id: eventId, at: Date.now(), minutes: 5, value: 50, anonymized: true });
+      postChatCard(actor.name, loc("CRNS.Equipment.RecordingSaved"));
+    }
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "equipment.backupRemoved"({ actorUuid, driveIds = [] } = {}, callerId) {
+    const session = getWorld("session") || {};
+    let changed = false;
+    for (const [pid, part] of Object.entries(session.participants || {})) {
+      if (part.actorUuid !== actorUuid || (!requesterIsGM(callerId) && !ownsParticipant(part, callerId))) continue;
+      const backups = session.equipment?.[pid]?.backups || {};
+      for (const [id, copy] of Object.entries(backups)) {
+        const remaining = (copy.driveIds || []).filter(drive => !driveIds.includes(drive));
+        if (remaining.length === copy.driveIds?.length) continue;
+        changed = true;
+        if (remaining.length) copy.driveIds = remaining; else delete backups[id];
+      }
+    }
+    if (changed) await setWorld("session", session);
+    return true;
+  },
+
+  async "run.activateProgram"({ pid, programId, targetRef = "", mode = "", override = false } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting || acting.part.jackedIn === false) return false;
+    const { part } = acting;
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    const deck = bridge.getDeck(actor);
+    if (part.netEffects?.deckDisabled) return { error: "CRNS.Equipment.DeckDisabled" };
+    const excludedProgramIds = Object.keys(session.destroyed || {}).filter(key => key.startsWith(`${pid}|`)).map(key => key.slice(pid.length + 1));
+    const loadout = validateEquipmentLoadout(actor, deck, { excludedProgramIds });
+    if (!loadout.valid) return { error: "CRNS.Equipment.InvalidLoadout", details: loadout.errors };
+    const program = (bridge.installedPrograms(deck) || []).find((p) => p.id === programId);
+    if (!program) return false;
+    const key = `${pid}|${programId}`;
+    const gmOverride = override && requesterIsGM(callerId);
+    const cls = program.system.class;
+    const custom = bridge.programDefinition?.(program);
+    const attacker = ["antipersonnelattacker", "antiprogramattacker"].includes(cls);
+    if (session.destroyed?.[key]) return { error: "CRNS.Errors.ProgramDestroyed" };
+    if (program.system.isRezzed || session.defeated?.[key]) return { error: "CRNS.Rules.DeactivateFirst" };
+    if (!gmOverride && programUsed(session, part, programId)) return { error: "CRNS.Errors.AlreadyRezzed" };
+    const once = custom ? custom.usage === "run" : cls === "defender" || programName(program) === "superglue";
+    if (!gmOverride && once && part.runUsedIds?.[programId]) return { error: "CRNS.Rules.OncePerRun" };
+    if (cls === "defender" && (bridge.installedPrograms(deck) || []).some((p) => p.id !== programId && p.system?.isRezzed
+      && !session.defeated?.[`${pid}|${p.id}`] && Number(p.system.rez?.value) > 0
+      && programName(p) === programName(program))) return { error: "CRNS.Rules.OneDefender" };
+    if (attacker || (cls === "blackice" && mode === "deployed")) {
+      if (!validEntityRef(targetRef) || targetRef === `runner:${pid}`) return { error: "CRNS.Errors.NoTarget" };
+      const targets = targetRef.split(":");
+      let valid = false;
+      if (targets[0] === "runner") {
+        const target = session.participants?.[targets[1]];
+        valid = !!target && target.kind === "runner" && target.archId === part.archId && target.jackedIn !== false && target.floorIndex === part.floorIndex;
+      } else if (targets[0] === "prog") {
+        const target = session.participants?.[targets[1]];
+        valid = !!target && target.archId === part.archId && activeProgramRefs(session, targets[1]).includes(targetRef);
+        const ps = session.progState?.[`${targets[1]}|${targets[2]}`];
+        valid &&= Number(ps?.floorIndex ?? target.floorIndex ?? 0) === Number(part.floorIndex || 0);
+      } else {
+        const arch = (getWorld("netArchs") || {})[part.archId];
+        valid = targets[1] === part.archId && arch?.floors?.[part.floorIndex || 0]?.id === targets[2]
+          && (game.actors?.get(refActorId(targetRef))?.system?.stats?.rez?.value ?? 0) > 0;
+      }
+      const antiProgram = cls === "antiprogramattacker" || (cls === "blackice" && isAntiProgram(program));
+      const targetOwner = targets[0] === "prog" ? session.participants?.[targets[1]] : null;
+      const targetProgram = targetOwner?.actorUuid ? fromUuidSync(targetOwner.actorUuid)?.getOwnedItem?.(targets[2]) : null;
+      const targetKind = targets[0] === "prog" && targetProgram?.system?.class === "blackice" ? "blackIce"
+        : { runner: "runner", prog: "program", ice: "blackIce", demon: "demon" }[targets[0]];
+      if (!valid || (custom ? !custom.targets.includes(targetKind) : antiProgram ? targets[0] === "runner" : targets[0] !== "runner")) return { error: "CRNS.Rules.InvalidTarget" };
+    }
+    if (cls === "blackice" && mode !== "deployed" && mode !== "trap") return false;
+    if (cls === "blackice" && mode === "trap" && game.combat?.started) return { error: "CRNS.Rules.TrapCombat" };
+    const actionCost = custom?.netActions ?? 1;
+    const scoutSerialBefore = part.scoutActionSerial || 0;
+    const spent = spendNet(part, actionCost, gmOverride);
+    if (spent !== true) return spent;
+    if (!await bridge.rezProgram(actor, programId)) return false;
+    rememberProgram(session, part, programId);
+    part.runUsedIds ||= {};
+    if (once) part.runUsedIds[programId] = true;
+    part.rezzed ||= {};
+    part.rezzed[programId] = { rezzed: true };
+    part.activations ||= {};
+    const activationId = uid("pa");
+    part.activations[programId] = { id: activationId, targetRef, attacker, spent: !gmOverride, cost: actionCost, once,
+      scoutSerialBefore, scoutSerial: part.scoutActionSerial || 0 };
+    await setWorld("session", session);
+    if (cls === "blackice") {
+      const res = await OPS["run.progDeploy"]({ pid, programId, mode, targetRef }, callerId);
+      if (res !== true) return res;
+      const deployed = getWorld("session") || {};
+      await triggerFloorIce(deployed, part.archId, pid);
+      await setWorld("session", deployed);
+    } else if (!attacker) {
+      await triggerFloorIce(session, part.archId, pid);
+      await setWorld("session", session);
+    }
+    return { ok: true, activationId };
+  },
+
+  async "run.applyProgramEffect"({ pid, programId, activationId, cancelled = false, sourceRef = "", sourceName = "", sourceProgram = null, effect = "" } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const { part } = acting;
+    const reservation = part.activations?.[programId];
+    if (!reservation || reservation.id !== activationId || !reservation.attacker) return false;
+    const actor = fromUuidSync(part.actorUuid);
+    if (!await bridge.derezProgram(actor, programId)) return false;
+    delete part.activations[programId];
+    if (part.rezzed) delete part.rezzed[programId];
+    if (cancelled) {
+      if (part.scoutActionSerial === reservation.scoutSerial) part.scoutActionSerial = reservation.scoutSerialBefore;
+      if (reservation.spent) part.actions.value = Math.min(part.actions.max, part.actions.value + (reservation.cost || 1));
+      const usage = session.programUsage?.[part.actorUuid];
+      if (usage?.round === roundKey(part)) delete usage.ids[programId];
+      if (reservation.once) delete part.runUsedIds[programId];
+    } else part.lastProgramUse = { programId, activationId, targetRef: reservation.targetRef };
+    await setWorld("session", session);
+    return { ok: true, sourceRef, sourceName, sourceProgram, effect, targetRef: reservation.targetRef };
+  },
+
+  async "run.deactivateProgram"({ pid, programId, override = false } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const { part } = acting;
+    if (!canDerezTrap(session, pid, programId) && !requesterIsGM(callerId)) return { error: "CRNS.Errors.TrapDerezFloor" };
+    const actor = fromUuidSync(part.actorUuid);
+    if (!actor?.getOwnedItem?.(programId)?.system?.isRezzed) return false;
+    queueArmor(session, pid, actor, actor.getOwnedItem(programId));
+    if (!(override && requesterIsGM(callerId))) {
+      const spent = spendNet(part);
+      if (spent !== true) return spent;
+    }
+    if (!await bridge.derezProgram(actor, programId)) return false;
+    await setWorld("session", session);
+    return OPS["run.setRezzed"]({ pid, programId, state: null }, callerId);
+  },
+
+  async "run.scanner"({ pid } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const { part } = acting;
+    if (part.meatActionTurn === turnKey(part) || part.netActionTurn === turnKey(part)) return { error: "CRNS.Rules.MeatActionUsed" };
+    part.meatActionTurn = turnKey(part);
+    part.scoutActionSerial = (part.scoutActionSerial || 0) + 1;
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "run.slideAttempt"({ pid, targetRef, destination } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const { part } = acting;
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    const used = part.slideTurn === turnKey(part) ? (part.slideCount || 1) : 0;
+    const limit = equipmentProfile(actor, bridge.getDeck(actor)).slideAttempts || 1;
+    if (part.slideAttempt || used >= limit) return { error: "CRNS.Rules.SlideUsed" };
+    const [kind, a, , iceId] = String(targetRef || "").split(":");
+    const prog = kind === "prog" ? targetRef.slice(5).replace(":", "|") : "";
+    const attached = (session.attachments || []).some((s) => s.pid === pid && s.archId === part.archId && (prog ? s.progKey === prog : kind === "ice" && a === part.archId && s.iceId === iceId));
+    if (!attached || !slideDestinations(session, pid).some((d) => d.floorIndex === Number(destination))) return { error: "CRNS.Rules.InvalidSlide" };
+    if (part.meatActionTurn === turnKey(part) || (part.actions?.value || 0) < 1) return { error: "CRNS.Errors.NoActions" };
+    part.actions.value -= 1;
+    part.scoutActionSerial = (part.scoutActionSerial || 0) + 1;
+    part.netActionTurn = turnKey(part);
+    part.slideTurn = turnKey(part);
+    part.slideCount = used + 1;
+    part.slideAttempt = { targetRef, destination: Number(destination) };
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "run.virusConfigure"({ pid, dv, actions } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    const part = session.participants?.[pid];
+    if (!part || !Number.isInteger(Number(dv)) || Number(dv) < 0 || !Number.isInteger(Number(actions)) || Number(actions) < 1) return false;
+    const arch = (getWorld("netArchs") || {})[part.archId];
+    if (topology(arch).rootIndex !== (part.floorIndex || 0)) return { error: "CRNS.Rules.VirusBottom" };
+    part.virusWork = { dv: Number(dv), actions: Number(actions), spent: 0, archId: part.archId, floorId: arch.floors[part.floorIndex || 0].id };
+    await setWorld("session", session);
+    return true;
+  },
+
+  async "run.virusSpend"({ pid } = {}, callerId) {
+    const session = getWorld("session") || {};
+    const acting = resolveActingRunner(session, pid, callerId);
+    if (!acting) return false;
+    const { part } = acting;
+    const work = part.virusWork;
+    const arch = (getWorld("netArchs") || {})[part.archId];
+    if (!work || work.archId !== part.archId || arch?.floors?.[part.floorIndex || 0]?.id !== work.floorId) return { error: "CRNS.Rules.VirusConfigure" };
+    if (work.spent >= work.actions) return { ok: true, ready: true, remaining: 0 };
+    if (part.meatActionTurn === turnKey(part)) return { error: "CRNS.Rules.MeatActionUsed" };
+    const spend = Math.min(work.actions - work.spent, part.actions?.value || 0);
+    if (spend < 1) return { error: "CRNS.Errors.NoActions" };
+    part.actions.value -= spend;
+    part.scoutActionSerial = (part.scoutActionSerial || 0) + 1;
+    part.netActionTurn = turnKey(part);
+    work.spent += spend;
+    await setWorld("session", session);
+    return { ok: true, ready: work.spent === work.actions, remaining: work.actions - work.spent };
+  },
+
   /** Jack In/Out toggle from the UI. Costs 1 action. Jack-out clears the
    *  rezzed mirror (the GM decides actual disconnection). */
-  async "run.jack"({ pid, in: jackIn } = {}, callerId) {
+  async "run.jack"({ pid, in: jackIn, safe = true, forced = false } = {}, callerId) {
     const session = getWorld("session") || {};
     const parts = session.participants || {};
     const part = parts[pid];
@@ -1540,12 +2235,23 @@ const OPS = {
     if (!requesterIsGM(callerId) && !ownsParticipant(part, callerId)) return false;
 
     const actions = part.actions || { value: 0, max: 0 };
-    if ((actions.value || 0) < 1) return { error: "CRNS.Errors.NoActions" };
-    actions.value = Math.max(0, (actions.value || 0) - 1);
+    if (!!part.jackedIn === !!jackIn) return false;
+    const spent = forced && requesterIsGM(callerId) ? true : spendNet(part);
+    if (spent !== true) return spent;
     part.actions = actions;
     part.jackedIn = !!jackIn;
-    part.rezUsedIds = {}; // jack in/out resets the per-program rez allowance (§9).
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (jackIn) {
+      part.runUsedIds = {};
+      if (actor) await onEquipmentJackIn(session, pid, actor, bridge);
+    }
     if (!jackIn) {
+      clearRunnerReferences(session, pid);
+      if (actor) await onEquipmentJackOut(session, pid, actor, bridge, { safe });
+      for (const p of bridge.installedPrograms(bridge.getDeck(actor)) || []) {
+        if (p.system?.isRezzed) await bridge.derezProgram(actor, p.id);
+      }
+      part.virusWork = null;
       part.rezzed = {}; // Clear the rezzed mirror on jack-out.
       await deleteProgActors(session, pid); // delete backing prog-ICE actors first.
       clearProgFloors(session, pid); // …and any floor overrides for it.
@@ -1565,9 +2271,8 @@ const OPS = {
     if (!part || part.kind !== "runner") return false;
     if (!requesterIsGM(callerId) && !ownsParticipant(part, callerId)) return false;
 
-    const actions = part.actions || { value: 0, max: 0 };
-    actions.value = Math.max(0, (actions.value || 0) - (Number(n) || 0));
-    part.actions = actions;
+    const spent = spendNet(part, Number(n));
+    if (spent !== true) return spent;
     await setWorld("session", session);
     return true;
   },
@@ -1589,6 +2294,39 @@ const OPS = {
   },
 
   /** Reset one runner's NET actions to a freshly recomputed maximum. */
+  async "run.startTurn"({ combatId, round, combatantId } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const combat = game.combat;
+    if (!combat || combat.id !== combatId || combat.round !== round) return false;
+    const session = getWorld("session") || {};
+    if (!combat.started) {
+      for (const part of Object.values(session.participants || {})) if (part.lastCombatTurn?.startsWith(`${combatId}:`)) delete part.lastCombatTurn;
+      for (const state of Object.values(session.demonState || {})) if (state.lastCombatTurn?.startsWith(`${combatId}:`)) delete state.lastCombatTurn;
+      await setWorld("session", session);
+      return true;
+    }
+    const current = combat.combatant;
+    if (!current || current.id !== combatantId) return false;
+    const stamp = `${combatId}:${round}:${combatantId}`;
+    let changed = false;
+    for (const [pid, part] of Object.entries(session.participants || {})) {
+      if (part.kind !== "runner" || part.lastCombatTurn === stamp) continue;
+      const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+      if (!actor || !combatantMatchesActor(current, part.actorUuid, actor.id)) continue;
+      const max = participantActionMax(part);
+      part.actions = { value: max, max }; part.lastCombatTurn = stamp;
+      await onEquipmentTurn(session, pid, actor, bridge);
+      changed = true;
+    }
+    if (current.actor?.type === "demon") {
+      const state = ensureDemonState(session, current.actor.id);
+      if (state && state.lastCombatTurn !== stamp) { state.value = state.max; state.lastCombatTurn = stamp; changed = true; }
+    }
+    if (changed) await setWorld("session", session);
+    return changed;
+  },
+
+  /** Explicit refresh from the action panel, including manual rounds outside combat. */
   async "run.reset"({ pid } = {}, callerId) {
     const session = getWorld("session") || {};
     const parts = session.participants || {};
@@ -1598,7 +2336,9 @@ const OPS = {
 
     const max = participantActionMax(part);
     part.actions = { value: max, max };
-    part.rezUsedIds = {}; // fresh turn → the per-program rez allowance resets (§9).
+    if (!game.combat?.started) { part.roundSerial = (part.roundSerial || 0) + 1; part.turnSerial = (part.turnSerial || 0) + 1; }
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (actor) await onEquipmentTurn(session, pid, actor, bridge);
     await setWorld("session", session);
     return true;
   },
@@ -1608,12 +2348,14 @@ const OPS = {
     if (!requesterIsGM(callerId)) return false;
     const session = getWorld("session") || {};
     const parts = session.participants || {};
-    for (const part of Object.values(parts)) {
+    for (const [pid, part] of Object.entries(parts)) {
       if (part.kind !== "runner") continue;
       if (archId && part.archId !== archId) continue;
       const max = participantActionMax(part);
       part.actions = { value: max, max };
-      part.rezUsedIds = {}; // fresh turn → reset the per-program rez allowance (§9).
+      if (!game.combat?.started) { part.roundSerial = (part.roundSerial || 0) + 1; part.turnSerial = (part.turnSerial || 0) + 1; }
+      const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+      if (actor) await onEquipmentTurn(session, pid, actor, bridge);
     }
     await setWorld("session", session);
     return true;
@@ -1628,8 +2370,7 @@ const OPS = {
     const part = parts[pid];
     if (!part || part.kind !== "runner" || !programId) return false;
     if (!requesterIsGM(callerId) && !ownsParticipant(part, callerId)) return false;
-    part.rezUsedIds = part.rezUsedIds || {};
-    part.rezUsedIds[programId] = true;
+    rememberProgram(session, part, programId);
     await setWorld("session", session);
     return true;
   },
@@ -1675,6 +2416,7 @@ const OPS = {
       // Delete its backing prog-ICE actor first (SPEC §14.12 / Task 1) — derez
       // restores REZ per module rule, so nothing mirrors back to the item.
       const progKey = `${pid}|${programId}`;
+      if (session.defeated) delete session.defeated[progKey];
       const derezActorId = (session.progState || {})[progKey]?.actorId || "";
       await deleteProgActors(session, pid, programId);
       if (session.progFloors) delete session.progFloors[progKey];
@@ -1703,7 +2445,7 @@ const OPS = {
   },
 
   /** Apply damage to a runner's rezzed program item (prog: target). */
-  async "run.progDamage"({ pid, programId, amount } = {}, callerId) {
+  async "run.progDamage"({ pid, programId, amount, sourceRef = "", sourceName = "", sourceProgram = null, effect = "", random = false } = {}, callerId) {
     const session = getWorld("session") || {};
     const parts = session.participants || {};
     const part = parts[pid];
@@ -1715,6 +2457,7 @@ const OPS = {
       if (!inSession) return false;
       const myTarget = (session.targets || {})[callerId] || "";
       if (myTarget !== `prog:${pid}:${programId}`) return { error: "CRNS.Errors.NotYourTarget" };
+      if (!canDamageTarget(session, myTarget, callerId)) return { error: "CRNS.Errors.NotYourTarget" };
     }
     const dmg = clampDamage(amount);
     // While rezzed with a backing actor (SPEC §14.12 / Task 1) the ACTOR is the
@@ -1729,8 +2472,7 @@ const OPS = {
       // Destroyed (REZ ≤ 0) → auto-derez GM-side + a distinct destroyed card.
       const rez = game.actors?.get(ps.actorId)?.system?.stats?.rez?.value ?? 1;
       if (rez <= 0) {
-        postDestroyedCard(name);
-        await autoDerezDestroyedProg(session, pid, programId);
+        await defeatProgram(session, pid, programId, { sourceRef, sourceName, sourceProgram, effect, random }, callerId);
         await setWorld("session", session);
       }
       return ok;
@@ -1745,8 +2487,7 @@ const OPS = {
     postDamageCard(name, dmg);
     const itemRez = actor.getOwnedItem?.(programId)?.system?.rez?.value ?? 1;
     if (itemRez <= 0) {
-      postDestroyedCard(name);
-      await autoDerezDestroyedProg(session, pid, programId);
+      await defeatProgram(session, pid, programId, { sourceRef, sourceName, sourceProgram, effect, random }, callerId);
       await setWorld("session", session);
     }
     return ok;
@@ -1755,15 +2496,16 @@ const OPS = {
   /** GM-only: apply "brain damage" straight to a targeted/selected netrunner's HP
    *  (CPR RED — NET damage goes to HP). Resolves the participant's backing actor
    *  and clamps GM-side (bridge.damageRunnerHp). Task 1. */
-  async "runner.damage"({ pid, amount } = {}, callerId) {
+  async "runner.damage"({ pid, amount, sourceRef = "", sourceName = "", sourceProgram = null, effect = "", isBlackIce = false } = {}, callerId) {
     if (!requesterIsGM(callerId)) return false;
     const session = getWorld("session") || {};
     const part = (session.participants || {})[pid];
     if (!part || part.kind !== "runner" || !part.actorUuid) return false;
     const actor = fromUuidSync?.(part.actorUuid) ?? null;
     if (!actor) return false;
-    const dmg = clampDamage(amount);
-    const ok = await bridge.damageRunnerHp(actor.id, dmg);
+    const dmg = await equipmentBrainDamage(session, pid, actor, clampDamage(amount), bridge, { sourceRef, sourceName, sourceProgram, effect, isBlackIce });
+    const ok = await bridge.damageRunnerHp(actor.id, dmg, { sourceRef, sourceName, sourceProgram, effect, isBlackIce });
+    await setWorld("session", session);
     if (ok) postDamageCard(actor.name, dmg);
     return ok;
   },
@@ -1791,6 +2533,7 @@ const OPS = {
     if (!acting) return { ok: false, applied: false };
     const { part } = acting;
     const archs = getWorld("netArchs") || {};
+    if (part.netEffects?.deckDisabled) return { ok: false, applied: false, error: "CRNS.Equipment.DeckDisabled" };
     const arch = archs[part.archId];
     const floors = arch?.floors || [];
     const floor = floors[part.floorIndex || 0];
@@ -1812,6 +2555,7 @@ const OPS = {
         break;
       }
       case "cloak": {
+        if (session.equipment?.[pid]) session.equipment[pid].swiftyPending = false;
         // Arch-level cloaks (Addendum 6). If the roller already has marker(s) and
         // the new total beats their LOWEST-dv marker → replace that dv (keep its
         // number); else append a new sequentially-numbered marker.
@@ -1851,45 +2595,39 @@ const OPS = {
         break;
       }
       case "virus": {
-        // Only on the LAST floor (root).
-        const isLast = (part.floorIndex || 0) === floors.length - 1;
-        if (isLast) {
+        const graph = topology(arch);
+        const work = part.virusWork;
+        if (!work || work.spent < work.actions || work.archId !== part.archId || work.floorId !== floor.id) return { ok: false, applied: false, error: "CRNS.Rules.VirusConfigure" };
+        if (!graph.error && (part.floorIndex || 0) === graph.rootIndex && t > work.dv) {
           const fx = getFloorFx(session, part.archId, floor.id);
-          fx.viruses.push({ id: uid("fx"), pid });
+          fx.viruses.push({ id: uid("fx"), pid, dv: t, removalDV: t, creationDV: work.dv, actions: work.actions });
           applied = true;
         }
+        work.spent = 0;
         postChatCard(loc("CRNS.Chat.Virus"),
           loc(applied ? "CRNS.Chat.VirusPlanted" : "CRNS.Chat.VirusFailed", { name }));
         break;
       }
       case "pathfinder": {
-        // Reveal walking DEEPER from the current floor: up to `total` floors,
-        // stopping INCLUSIVE at the first un-breached password floor with dv > total.
-        // The CURRENT floor is considered FIRST: if the runner is standing ON an
-        // un-breached password floor the runner cannot beat (dv > total), reveal
-        // NOTHING deeper (revealMax = the current index).
         const start = part.floorIndex || 0;
-        let maxIndex = start;
+        const graph = topology(arch);
+        if (graph.error) return { ok: false, applied: false, error: graph.error };
         const isBlocking = (f) => {
           if (f.kind !== "password") return false;
           const ffx = (session.floorState || {})[floorKey(part.archId, f.id)];
           const breached = !!(ffx && ffx.breached);
           return !breached && (Number(f.dv) || 0) > t;
         };
-        if (isBlocking(floors[start])) {
-          // Standing on an un-breached password floor beyond reach — stop here.
-          maxIndex = start;
-        } else {
-          const limit = Math.min(floors.length - 1, start + Math.max(0, t));
-          for (let i = start + 1; i <= limit; i += 1) {
-            const f = floors[i];
-            maxIndex = i;
-            if (isBlocking(f)) break; // inclusive stop.
-          }
-        }
+        const revealed = pathfinderFloors(arch, start, t, isBlocking);
         session.reveal = session.reveal || {};
         session.reveal[pid] = session.reveal[pid] || {};
-        session.reveal[pid][part.archId] = Math.max(session.reveal[pid][part.archId] ?? -1, maxIndex);
+        const previous = session.reveal[pid][part.archId];
+        if (floors.every((f) => !Object.hasOwn(f, "parentId")) && !Array.isArray(previous)) {
+          const maxIndex = Math.max(...revealed.map((id) => floors.findIndex((f) => f.id === id)));
+          session.reveal[pid][part.archId] = Math.max(Number.isFinite(previous) ? previous : -1, maxIndex);
+        } else {
+          session.reveal[pid][part.archId] = [...new Set([...(Array.isArray(previous) ? previous : []), ...revealed])];
+        }
         applied = true;
         postChatCard(loc("CRNS.Chat.Pathfinder"), loc("CRNS.Chat.PathfinderDone", { name }));
         break;
@@ -1905,11 +2643,13 @@ const OPS = {
   /** Transient activation pulse on a controlled node (SPEC §14.7). owner of the
    *  controlling pid or GM. Spends nothing (UI spends); emits a notify for the
    *  highlight + posts a chat card. */
-  async "run.nodePulse"({ archId, floorId } = {}, callerId) {
+  async "run.nodePulse"({ archId, floorId, override = false } = {}, callerId) {
     const session = getWorld("session") || {};
     const fx = (session.floorState || {})[floorKey(archId, floorId)];
     const controllerPid = fx?.control?.pid || "";
     if (!controllerPid) return false;
+    const part = session.participants?.[controllerPid];
+    if (!part || part.archId !== archId || part.jackedIn === false) return false;
     // Caller must be GM or own the controlling participant.
     if (!requesterIsGM(callerId)) {
       const part = (session.participants || {})[controllerPid];
@@ -1917,6 +2657,13 @@ const OPS = {
     }
     const arch = (getWorld("netArchs") || {})[archId];
     const floor = (arch?.floors || []).find((f) => f.id === floorId);
+    if (!floor || floor.kind !== "controlnode") return false;
+    const stamp = turnKey(part);
+    if (!(override && requesterIsGM(callerId)) && fx.pulseTurn === stamp) return { error: "CRNS.Rules.NodeUsed" };
+    const spent = spendNet(part, 1, override && requesterIsGM(callerId));
+    if (spent !== true) return spent;
+    fx.pulseTurn = stamp;
+    await setWorld("session", session);
     const label = floor ? (floor.label || loc(`CRNS.Floor.${floor.kind}`)) : "";
     notifyClients({ kind: "nodePulse", archId, floorId });
     postChatCard(loc("CRNS.Chat.NodePulse"), loc("CRNS.Chat.NodePulseBody", { floor: label }));
@@ -2039,6 +2786,11 @@ const OPS = {
     if (!requesterIsGM(callerId)) return false;
     if (!archId || !pid || (!iceId && !progKey)) return false;
     const session = getWorld("session") || {};
+    const part = session.participants?.[pid];
+    const attempt = part?.slideAttempt;
+    const expectedRef = progKey ? `prog:${progKey.replace("|", ":")}` : null;
+    if (!attempt || (progKey ? attempt.targetRef !== expectedRef : !attempt.targetRef.endsWith(`:${iceId}`))
+      || !slideDestinations(session, pid).some((d) => d.floorIndex === attempt.destination)) return false;
     session.slid = session.slid || [];
     if (progKey) {
       pruneAttachments(session, (a) => a.archId === archId && a.progKey === progKey && a.pid === pid);
@@ -2049,6 +2801,17 @@ const OPS = {
       const exists = session.slid.some((s) => s.archId === archId && s.iceId === iceId && s.pid === pid);
       if (!exists) session.slid.push({ archId, iceId, pid });
     }
+    delete part.slideAttempt;
+    await setWorld("session", session);
+    return OPS["session.move"]({ pid, floorIndex: attempt.destination }, callerId);
+  },
+
+  async "run.clearSlideAttempt"({ pid, targetRef } = {}, callerId) {
+    if (!requesterIsGM(callerId)) return false;
+    const session = getWorld("session") || {};
+    const part = session.participants?.[pid];
+    if (part?.slideAttempt?.targetRef !== targetRef) return false;
+    delete part.slideAttempt;
     await setWorld("session", session);
     return true;
   },
@@ -2092,6 +2855,9 @@ const OPS = {
     const acting = resolveActingRunner(session, pid, callerId);
     if (!acting) return false;
     if (!programId || (mode !== "trap" && mode !== "deployed")) return false;
+    if (mode === "trap" && game.combat?.started) return { error: "CRNS.Rules.TrapCombat" };
+    const reservation = acting.part.activations?.[programId];
+    if (!requesterIsGM(callerId) && (!reservation || reservation.targetRef !== targetRef)) return false;
 
     // Deployed mode requires a valid target; trap needs none.
     if (mode === "deployed" && !validEntityRef(targetRef)) return { error: "CRNS.Errors.NoTarget" };
@@ -2121,6 +2887,8 @@ const OPS = {
           atk: program.system?.atk, def: program.system?.def,
           rez: program.system?.rez?.value, rezMax: program.system?.rez?.max,
           blackIceType: program.system?.blackIceType,
+          content: bridge.programDefinition?.(program),
+          ...equipmentIceStats(session, pid, runnerActor, program),
         }, archName) || "";
       }
     }
@@ -2132,28 +2900,16 @@ const OPS = {
       actorId,
     };
 
-    // Deployed BI enters initiative like a regular ICE encounter (Addendum 4):
-    // ALWAYS jump to the top of the queue on rez (auto-creates the combat), and
-    // if the target is a RUNNER, provoke that runner's SPEED test via the normal
-    // pendingTests flow. Non-runner targets (ice/demon/prog) just queue + react.
+    // Deployment queues the ICE; only an ambush grants a SPEED test/effect.
     if (mode === "deployed" && actorId) {
       const iceActor = game.actors?.get(actorId);
       const iceName = iceActor?.name || loc("CRNS.Actions.KindIce");
       await moveToTopOfQueue(actorId);
-      const ref = `prog:${key.replace("|", ":")}`; // prog:<ownerPid>:<programId>
       const [tKind] = (targetRef || "").split(":");
-      if (tKind === "runner") {
-        const targetPid = targetRef.slice("runner:".length);
+      if (tKind === "runner" || tKind === "prog") {
+        const targetPid = targetRef.split(":")[1];
         const targetPart = (session.participants || {})[targetPid];
         if (targetPart && targetPart.kind === "runner") {
-          session.pendingTests = session.pendingTests || [];
-          const exists = session.pendingTests.some((t) => t.pid === targetPid && t.ref === ref);
-          if (!exists) {
-            session.pendingTests.push({
-              id: uid("st"), pid: targetPid, ref,
-              iceActorId: actorId, iceName, ts: Date.now(),
-            });
-          }
           // Attach to the TARGET runner so the BI CHASES them between floors
           // (Addendum 5) — same prog-attachment shape as a triggered trap. Skip
           // if that runner already slid this BI; dedup otherwise. Ends on the
@@ -2170,7 +2926,7 @@ const OPS = {
           await bootstrapRunnerCombat(targetPart, [actorId]);
         }
       }
-      postChatCard(iceName, loc("CRNS.Chat.IceReacts", { name: iceName }));
+      postChatCard(iceName, loc("CRNS.Rules.Deployed"));
     }
 
     await setWorld("session", session);
@@ -2181,19 +2937,27 @@ const OPS = {
 /** Whether an op handler is registered. Used to guard optional calls (e.g. the
  *  combat hooks trying to run run.reset before Phase D exists). */
 export function hasOp(op) {
-  return typeof OPS[op] === "function";
+  return Object.hasOwn(OPS, op) && typeof OPS[op] === "function";
 }
 
+let operationQueue = Promise.resolve();
+
 export async function applyOp(op, payload, userId) {
+  if (typeof op !== "string" || !hasOp(op) || !game.users.get(userId)
+    || !payload || typeof payload !== "object" || Array.isArray(payload)) return false;
   const fn = OPS[op];
   if (!fn) {
     console.warn(`${MODULE_ID} | unknown op ${op}`);
     return false;
   }
-  try {
-    return await fn(payload, userId);
-  } catch (e) {
-    console.error(`${MODULE_ID} | op ${op} failed`, e);
-    return false;
-  }
+  payload = foundry.utils.deepClone(payload);
+  const pending = operationQueue.then(async () => {
+    try { return await fn(payload, userId); }
+    catch (e) {
+      console.error(`${MODULE_ID} | op ${op} failed`, e);
+      return false;
+    }
+  });
+  operationQueue = pending.then(() => undefined, () => undefined);
+  return pending;
 }

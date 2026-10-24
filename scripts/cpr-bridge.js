@@ -5,17 +5,39 @@
  * degrades gracefully rather than breaking the whole app.
  */
 
-import { loc, esc, netActionsMax as _netActionsMax, MODULE_ID, BLACK_ICE, DEMONS, ENTITY_ICONS } from "./constants.js";
+import { loc, netActionsMax as _netActionsMax, MODULE_ID, BLACK_ICE, DEMONS, ENTITY_ICONS } from "./constants.js";
 
 // URL imports from the active system (legal in Foundry v12).
 // CPRRolls exposes named classes; CPRChat is the default export.
 import * as CPRRolls from "/systems/cyberpunk-red-core/modules/rolls/cpr-rolls.js";
 import CPRChat from "/systems/cyberpunk-red-core/modules/chat/cpr-chat.js";
 import CPRCONFIG from "/systems/cyberpunk-red-core/modules/system/config.js";
+import { normalizeContent, contentDocumentData, documentContent } from "./custom-content.js";
+
+/** Observe native CPR death saves without changing the roll or its dialog. */
+export function observeDeathSave(actor, callback) {
+  let prototype = actor && Object.getPrototypeOf(actor);
+  while (prototype && !Object.hasOwn(prototype, "processDeathSave")) prototype = Object.getPrototypeOf(prototype);
+  const original = prototype?.processDeathSave;
+  if (typeof original !== "function" || original._crnsObserved) return;
+  const wrapped = function(roll) {
+    const result = original.call(this, roll);
+    callback({ actorUuid: this.uuid, failed: roll.initialRoll === 10 || roll.resultTotal >= this.system.stats.body.value });
+    return result;
+  };
+  wrapped._crnsObserved = true;
+  prototype.processDeathSave = wrapped;
+}
 
 function sysError(e) {
   console.error("cyberpunk-red-netrunning-suite | bridge", e);
   try { ui.notifications.error(loc("CRNS.Errors.SystemApi")); } catch (_e) { /* noop */ }
+}
+
+async function consumeRollLuck(actor, roll) {
+  const available = actor?.system?.stats?.luck?.value;
+  if (!Number.isInteger(roll.luck) || roll.luck <= 0 || !Number.isFinite(available)) return;
+  await actor.update({ "system.stats.luck.value": Math.max(0, available - roll.luck) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -65,7 +87,7 @@ export function interfaceAbilities() {
   try {
     const map = CPRCONFIG?.interfaceAbilities || {};
     for (const [key, i18n] of Object.entries(map)) {
-      out.push({ key, label: game.i18n.localize(i18n), free: false });
+      out.push({ key, label: game.i18n.localize(i18n), free: key === "scanner", meat: key === "scanner" });
     }
   } catch (e) { /* noop — fall through with Speed/Defense only */ }
   // Speed + Defense are handled by the system's _createInterfaceRoll and are
@@ -95,7 +117,7 @@ export function rezzedPrograms(deck) {
  * Interface ability roll. `ability` ∈ CONFIG.CPR.interfaceAbilities keys plus
  * "speed" / "defense" (the system's _createInterfaceRoll handles those).
  */
-export async function rollInterface(actor, ability, event) {
+export async function rollInterface(actor, ability, event, beforeRoll) {
   try {
     // Auto-rolls (defence/speed) arrive with no event; synthesize one that skips
     // the dialog. handleRollDialog only inverts ctrl for type==="click", so a
@@ -115,7 +137,9 @@ export async function rollInterface(actor, ability, event) {
 
     const keepRolling = await roll.handleRollDialog(event, actor, deck);
     if (!keepRolling) return null;
+    if (beforeRoll && await beforeRoll() !== true) return null;
     await roll.roll();
+    await consumeRollLuck(actor, roll);
 
     roll.entityData = { actor: actor.id };
     await CPRChat.RenderRollCard(roll);
@@ -129,6 +153,21 @@ export async function rollInterface(actor, ability, event) {
 export async function rollProgram(actor, programId, executionType, event) {
   try {
     event = event ?? { ctrlKey: true, metaKey: false, type: "auto" };
+    const program = actor.getOwnedItem?.(programId);
+    if (!program) return null;
+    if (executionType === "def" || (executionType === "atk" && program.system?.class === "blackice")) {
+      const roll = new CPRRolls.CPRProgramStatRoll(
+        game.i18n.localize(`CPR.global.blackIce.stats.${executionType}`),
+        Number(program.system?.[executionType]) || 0,
+      );
+      roll.setNetCombat(program.name);
+      if (!await roll.handleRollDialog(event, actor, program)) return null;
+      await roll.roll();
+      await consumeRollLuck(actor, roll);
+      roll.entityData = { actor: actor.id };
+      await CPRChat.RenderRollCard(roll);
+      return roll;
+    }
     const deck = getDeck(actor);
     if (!deck) { ui.notifications.warn(loc("CRNS.Errors.NoDeck")); return null; }
     const netRoleItem = getNetRole(actor);
@@ -145,6 +184,7 @@ export async function rollProgram(actor, programId, executionType, event) {
     const keepRolling = await roll.handleRollDialog(event, actor, deck);
     if (!keepRolling) return null;
     await roll.roll();
+    await consumeRollLuck(actor, roll);
 
     roll.entityData = { actor: actor.id };
     if (deck) roll.entityData.item = deck.id;
@@ -187,6 +227,7 @@ export async function rezProgram(actor, programId) {
     if (deck.isOwned && deck.isEmbedded) updateList.push({ _id: deck.id, system: deck.system });
     if (program.isOwned && program.isEmbedded) updateList.push({ _id: program.id, system: program.system });
     if (updateList.length) await actor.updateEmbeddedDocuments("Item", updateList);
+    await setProgramDefeated(actor, programId, false);
     return true;
   } catch (e) { sysError(e); return false; }
 }
@@ -195,10 +236,15 @@ export async function rezProgram(actor, programId) {
 export async function derezProgram(actor, programId) {
   try {
     const deck = getDeck(actor);
-    if (!deck) { ui.notifications.warn(loc("CRNS.Errors.NoDeck")); return false; }
     const program = actor.getOwnedItem(programId);
     if (!program) return false;
     if (!program.system.isRezzed) return true;
+    if (!deck && program.system.class === "blackice") {
+      program.unsetRezzed?.();
+      await program.update({ "system.isRezzed": false, "system.rez.value": program.system.rez.max });
+      return true;
+    }
+    if (!deck) { ui.notifications.warn(loc("CRNS.Errors.NoDeck")); return false; }
 
     if (program.system.class === "blackice") {
       // Mirror of the rez-side note above: the system's `deck.derezProgram`
@@ -238,6 +284,24 @@ export async function applyProgramDamage(actor, programId, amount) {
   } catch (e) { sysError(e); return false; }
 }
 
+/** Keep the native Rezzed state at 0 REZ, but suppress this program's effects. */
+export async function setProgramDefeated(actor, programId, defeated) {
+  const program = actor?.getOwnedItem?.(programId);
+  if (!program) return false;
+  const saved = program.getFlag?.(MODULE_ID, "defeatedEffects") || [];
+  if (defeated) {
+    const enabled = Array.from(program.effects || []).filter((e) => !e.disabled);
+    if (enabled.length) {
+      await program.setFlag(MODULE_ID, "defeatedEffects", [...new Set([...saved, ...enabled.map((e) => e.id)])]);
+      await program.updateEmbeddedDocuments("ActiveEffect", enabled.map((e) => ({ _id: e.id, disabled: true })));
+    }
+  } else if (saved.length) {
+    await program.updateEmbeddedDocuments("ActiveEffect", saved.filter((id) => program.effects?.get(id)).map((id) => ({ _id: id, disabled: false })));
+    await program.unsetFlag(MODULE_ID, "defeatedEffects");
+  }
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Architecture-entity actors (blackIce / demon Actor documents)        */
 /* ------------------------------------------------------------------ */
@@ -249,7 +313,8 @@ async function ensureFolder(name, parent) {
     (f) => f.type === "Actor" && f.name === name && (f.folder?.id ?? null) === (parent?.id ?? null),
   );
   if (existing) return existing;
-  return Folder.create({ name, type: "Actor", folder: parent?.id ?? null });
+  return Folder.create({ name, type: "Actor", folder: parent?.id ?? null,
+    flags: { [MODULE_ID]: { managedEntityFolder: true } } });
 }
 
 /** Root "NET Architectures" folder → child <archName> folder (both idempotent). */
@@ -261,8 +326,10 @@ export async function ensureEntityFolder(archName) {
 }
 
 /** Create a blackIce Actor seeded from the constants table. Returns actor.id. */
-export async function createIceActor(type, archName) {
+export async function createIceActor(type, archName, content) {
   try {
+    const custom = archContent({ type, content }, "blackIce");
+    if (custom) return createContentActor(custom, archName);
     const def = BLACK_ICE[type];
     if (!def) return null;
     const folder = await ensureEntityFolder(archName);
@@ -271,6 +338,7 @@ export async function createIceActor(type, archName) {
       name: loc(`${def.effectKey}.name`),
       img: ENTITY_ICONS[type],
       folder: folder?.id ?? null,
+      flags: { [MODULE_ID]: { managedEntity: true } },
       system: {
         // Per SPEC §5: tgt "P" -> "antiprogram", else "antipersonnel".
         class: def.tgt === "P" ? "antiprogram" : "antipersonnel",
@@ -304,6 +372,7 @@ export async function createProgIceActor(snap, archName) {
       name: snap.name || loc("CRNS.Actions.KindProgram"),
       img: ENTITY_ICONS[key] || snap.img || "icons/svg/mystery-man.svg",
       folder: folder?.id ?? null,
+      flags: { [MODULE_ID]: { managedEntity: true, ...(snap.content ? { customContent: normalizeContent(snap.content) } : {}) } },
       system: {
         class: cls,
         stats: {
@@ -318,8 +387,10 @@ export async function createProgIceActor(snap, archName) {
 }
 
 /** Create a demon Actor seeded from the constants table. Returns actor.id. */
-export async function createDemonActor(type, archName) {
+export async function createDemonActor(type, archName, content) {
   try {
+    const custom = archContent({ type, content }, "demon");
+    if (custom) return createContentActor(custom, archName);
     const def = DEMONS[type];
     if (!def) return null;
     const folder = await ensureEntityFolder(archName);
@@ -338,7 +409,7 @@ export async function createDemonActor(type, archName) {
       },
       // Record the constants-table type so demonState can seed lazily without
       // name matching (SPEC §14.8).
-      flags: { [MODULE_ID]: { type } },
+      flags: { [MODULE_ID]: { type, managedEntity: true } },
     });
     return actor?.id ?? null;
   } catch (e) { sysError(e); return null; }
@@ -349,6 +420,7 @@ export async function createDemonActor(type, archName) {
  *  actors). Returns null when nothing matches. */
 export function getDemonType(actor) {
   try {
+    if (programDefinition(actor)) return null;
     const flagged = actor?.getFlag?.(MODULE_ID, "type") ?? actor?.flags?.[MODULE_ID]?.type;
     if (flagged && DEMONS[flagged]) return flagged;
     const name = String(actor?.name ?? "").trim().toLowerCase();
@@ -389,6 +461,8 @@ export async function duplicateEntityActor(actorId, archName) {
     const folder = await ensureEntityFolder(archName);
     const objData = src.toObject();
     delete objData._id;
+    objData.flags ||= {};
+    objData.flags[MODULE_ID] = { ...(objData.flags[MODULE_ID] || {}), managedEntity: true };
     objData.folder = folder?.id ?? null;
     // Fresh run: restore REZ to max on the copy.
     const max = objData.system?.stats?.rez?.max;
@@ -408,7 +482,10 @@ export async function deleteEntityFolder(archName) {
     const child = game.folders?.find(
       (f) => f.type === "Actor" && f.name === archName && f.folder?.id === root.id,
     );
-    if (child) await child.delete();
+    // A same-named folder may contain the GM's own documents or legacy actors.
+    const occupied = child && (game.actors?.some((a) => a.folder?.id === child.id)
+      || game.folders?.some((f) => f.folder?.id === child.id));
+    if (child?.flags?.[MODULE_ID]?.managedEntityFolder === true && !occupied) await child.delete();
     return true;
   } catch (e) { sysError(e); return false; }
 }
@@ -437,6 +514,8 @@ export async function applyActorOverrides(actorId, overrides) {
     if (typeof overrides.name === "string" && overrides.name) patch.name = overrides.name;
     if (typeof overrides.img === "string" && overrides.img) patch.img = overrides.img;
     if (overrides.system && typeof overrides.system === "object") patch.system = overrides.system;
+    const custom = programDefinition(overrides);
+    if (custom) patch[`flags.${MODULE_ID}.customContent`] = custom;
     if (Object.keys(patch).length) await actor.update(patch);
     return true;
   } catch (e) { sysError(e); return false; }
@@ -450,7 +529,8 @@ export function snapshotEntityActor(actorId) {
     return {
       name: actor.name,
       img: actor.img,
-      system: { stats: foundry.utils.deepClone(actor.system?.stats ?? {}) },
+      system: { stats: foundry.utils.deepClone(actor.system?.stats ?? {}), ...(actor.type === "blackIce" ? { class: actor.system.class } : {}) },
+      ...(programDefinition(actor) ? { flags: { [MODULE_ID]: { customContent: programDefinition(actor) } } } : {}),
     };
   } catch (e) { return null; }
 }
@@ -458,14 +538,18 @@ export function snapshotEntityActor(actorId) {
 /** Bulk-delete entity actors by id, ignoring missing ones. */
 export async function deleteEntityActors(actorIds) {
   try {
-    const ids = (actorIds || []).filter((id) => game.actors?.get(id));
+    const ids = [...new Set(actorIds || [])].filter((id) => {
+      const actor = game.actors?.get(id);
+      return ["blackIce", "demon"].includes(actor?.type)
+        && actor?.flags?.[MODULE_ID]?.managedEntity === true;
+    });
     if (ids.length) await Actor.deleteDocuments(ids);
     return true;
   } catch (e) { sysError(e); return false; }
 }
 
 /** Roll an entity stat off the backing actor (blackIce/demon createStatRoll). */
-export async function rollEntityStat(actor, statName, event) {
+export async function rollEntityStat(actor, statName, event, beforeRoll) {
   try {
     event = event ?? { ctrlKey: true, metaKey: false, type: "auto" };
     if (!actor?.createStatRoll) { ui.notifications.error(loc("CRNS.Errors.SystemApi")); return null; }
@@ -474,6 +558,7 @@ export async function rollEntityStat(actor, statName, event) {
     if (roll.setNetCombat) roll.setNetCombat(actor.name);
     const keepRolling = await roll.handleRollDialog(event, actor);
     if (!keepRolling) return null;
+    if (beforeRoll && await beforeRoll() !== true) return null;
     await roll.roll();
     roll.entityData = { actor: actor.id };
     await CPRChat.RenderRollCard(roll);
@@ -495,22 +580,6 @@ export async function rollEntityDamage(actor, formula, event) {
     roll.entityData = { actor: actor.id };
     await CPRChat.RenderRollCard(roll);
     return roll;
-  } catch (e) { sysError(e); return null; }
-}
-
-/** Demon combat number: no dice, styled static chat card, speaker = actor. */
-export async function rollDemonStatic(actor, cn) {
-  try {
-    const name = actor?.name ?? "";
-    const line = loc("CRNS.Chat.DemonAction", { name, cn });
-    const content =
-      `<div class="crns-chat-card"><div class="crns-chat-title">${esc(name)}</div>` +
-      `<div class="crns-chat-body">${line}</div></div>`;
-    return ChatMessage.create({
-      user: game.user.id,
-      speaker: actor ? ChatMessage.getSpeaker({ actor }) : { alias: name },
-      content,
-    });
   } catch (e) { sysError(e); return null; }
 }
 
@@ -576,4 +645,47 @@ export async function restoreEntity(actorId) {
     await actor.update({ "system.stats.rez.value": max });
     return true;
   } catch (e) { sysError(e); return false; }
+}
+
+/** Content definitions create fresh world documents only on an explicit GM command. */
+export async function createContentDocument(definition) {
+  if (!game.user.isGM) return null;
+  const data = contentDocumentData(definition);
+  return data.type === "program" ? Item.create(data) : Actor.create(data);
+}
+
+export async function createContentActor(definition, archName) {
+  if (!game.user.isGM || definition.kind === "program") return null;
+  const data = contentDocumentData(definition);
+  const folder = await ensureEntityFolder(archName);
+  data.folder = folder?.id ?? null;
+  data.flags[MODULE_ID].managedEntity = true;
+  const actor = await Actor.create(data);
+  return actor?.id ?? null;
+}
+
+export function contentFromDocument(document, id) {
+  const system = document?.system || {};
+  const saved = document.flags?.[MODULE_ID]?.customContent || {};
+  const cls = document.type === "demon" ? "antipersonnel" : system.class;
+  const stats = document?.type === "program" ? system : system.stats || {};
+  return normalizeContent({ ...saved, id, kind: document.type, name: document.name, img: document.img,
+    description: String(system.description?.value || system.notes || "").replace(/<[^>]*>/g, ""),
+    class: cls, targets: cls === saved.class && (cls !== "blackice" || system.blackIceType === saved.blackIceType) ? saved.targets : undefined,
+    blackIceType: system.blackIceType || saved.blackIceType, stats: { ...stats, rez: stats.rez?.max ?? 0 }, damage: system.damage || saved.damage,
+    size: system.size ?? saved.size, price: system.price?.market ?? system.cost ?? saved.price ?? 0 });
+}
+
+export function programDefinition(document) {
+  try { return documentContent(document); } catch { return null; }
+}
+
+export function archContent(entity, kind) {
+  if (!String(entity?.type || "").startsWith("custom_")) return null;
+  try {
+    const id = entity.type.slice(7);
+    const stored = entity.content || game.settings.get(MODULE_ID, "customContent")?.[id];
+    const def = normalizeContent(stored);
+    return def.id === id && def.kind === kind ? def : null;
+  } catch { return null; }
 }

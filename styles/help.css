@@ -1,0 +1,335 @@
+/* Load after netrunning.css. Reading layout only; never affects the canvas. */
+.crns-root .crns-help-overlay {
+  --crns-help-muted: color-mix(in srgb, var(--crns-text) 82%, var(--crns-panel));
+  padding: 16px;
+  background: rgb(0 0 0 / 80%);
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* Base-theme effects must not move or obscure reference text. */
+.crns-root .crns-help-overlay,
+.crns-root .crns-help-overlay * {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+  text-shadow: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.crns-root .crns-help-overlay .crns-help-panel {
+  width: min(880px, 100%);
+  background: var(--crns-panel, #0a1014);
+  color: var(--crns-text, #d7ffe6);
+  border: 1px solid var(--crns-border);
+}
+
+.crns-root .crns-help-overlay .crns-help-head {
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--crns-panel);
+}
+
+.crns-root .crns-help-overlay .crns-help-title {
+  font: 600 20px/1.35 "Segoe UI", Tahoma, sans-serif;
+  color: var(--crns-text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.crns-root .crns-help-overlay .crns-help-close {
+  min-width: 36px !important;
+  height: 36px !important;
+  font-size: 18px;
+}
+
+.crns-root .crns-help-overlay .crns-help-body {
+  padding: 8px 20px 24px;
+  scrollbar-gutter: stable;
+}
+
+.crns-root .crns-help-overlay .crns-help-sec {
+  margin: 20px 0 12px;
+  padding: 0 0 8px;
+  color: var(--crns-text);
+  border-bottom: 1px solid var(--crns-border);
+  font: 600 18px/1.4 "Segoe UI", Tahoma, sans-serif;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.crns-root .crns-help-overlay .crns-help-group {
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--crns-border);
+  background: var(--crns-panel);
+}
+
+.crns-root .crns-help-overlay .crns-help-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+  min-height: 46px;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  color: var(--crns-text);
+  background: color-mix(in srgb, var(--crns-text) 5%, var(--crns-panel));
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.crns-root .crns-help-overlay .crns-help-group-title > span:first-of-type { min-width: 0; overflow-wrap: anywhere; }
+.crns-root .crns-help-overlay .crns-help-count {
+  margin-left: auto;
+  color: var(--crns-help-muted);
+  font: 400 14px/1.5 Consolas, monospace;
+}
+
+.crns-root .crns-help-overlay input:focus-visible,
+.crns-root .crns-help-overlay button:focus-visible,
+.crns-root .crns-help-overlay .crns-help-entry:focus-visible {
+  outline: 2px solid var(--crns-accent);
+  outline-offset: 2px;
+}
+
+.crns-root .crns-help-overlay .crns-help-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.crns-root .crns-help-overlay .crns-help-entry {
+  gap: 16px;
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  border-top: 1px solid var(--crns-border);
+  background: var(--crns-panel);
+  color: var(--crns-text);
+}
+
+.crns-root .crns-help-overlay .crns-help-entry.framed {
+  border-left: 4px solid var(--crns-accent);
+  padding-left: 12px;
+  background: color-mix(in srgb, var(--crns-accent) 6%, var(--crns-panel));
+}
+
+.crns-root .crns-help-overlay .crns-help-portrait {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  background: var(--crns-bg);
+  border: 1px solid var(--crns-border);
+}
+
+.crns-root .crns-help-overlay .crns-help-code {
+  width: 48px;
+  align-self: flex-start;
+  padding-top: 8px;
+  color: var(--crns-help-muted);
+  font-size: 16px;
+}
+
+.crns-root .crns-help-overlay .crns-help-name .crns-help-code {
+  display: inline-block;
+  width: auto;
+  margin-right: 8px;
+  padding: 0;
+  font: 700 14px/1.4 Consolas, monospace;
+  vertical-align: baseline;
+}
+
+.crns-root .crns-help-overlay .crns-help-info { overflow-wrap: break-word; }
+.crns-root .crns-help-overlay .crns-help-name {
+  margin-bottom: 6px;
+  color: var(--crns-text);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.crns-root .crns-help-overlay .crns-help-stats {
+  gap: 6px 16px;
+  margin: 0 0 8px;
+  color: var(--crns-text);
+  font: 600 14px/1.5 Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.crns-root .crns-help-overlay .crns-help-stats span {
+  border: 0;
+  padding: 0;
+}
+
+.crns-root .crns-help-overlay .crns-help-effect {
+  max-width: 78ch;
+  color: var(--crns-text);
+  font-size: 16px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.crns-root .crns-help-overlay .crns-help-source {
+  margin-top: 8px;
+  color: var(--crns-help-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.crns-root .crns-help-overlay [hidden] { display: none !important; }
+.crns-root .crns-help-overlay .crns-help-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--crns-border);
+}
+.crns-root .crns-help-overlay .crns-help-search label { font-weight: 600; }
+.crns-root .crns-help-overlay .crns-help-search input {
+  flex: 1 1 180px;
+  min-width: 0;
+  height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--crns-border);
+  border-radius: 0;
+  background: var(--crns-bg);
+  color: var(--crns-text);
+  font: inherit;
+}
+.crns-root .crns-help-overlay .crns-help-search input::placeholder { color: var(--crns-help-muted); opacity: 1; }
+.crns-root .crns-help-overlay .crns-help-search button {
+  flex: 0 0 auto;
+  width: auto !important;
+  height: 40px !important;
+  padding: 6px 12px !important;
+  border: 1px solid var(--crns-border) !important;
+  border-radius: 0 !important;
+  background: var(--crns-panel) !important;
+  color: var(--crns-text) !important;
+  font: inherit !important;
+}
+.crns-root .crns-help-overlay .crns-help-empty { margin: 16px 0; }
+.crns-root .crns-help-overlay .crns-help-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--crns-border);
+}
+.crns-root .crns-help-overlay .crns-help-tabs button {
+  flex: 0 1 auto;
+  width: auto !important;
+  height: auto !important;
+  min-height: 40px !important;
+  margin: 0 !important;
+  padding: 6px 18px !important;
+  border: 1px solid var(--crns-border) !important;
+  border-radius: 0 !important;
+  background: var(--crns-panel) !important;
+  color: var(--crns-text) !important;
+  font: 600 16px/1.5 "Segoe UI", Tahoma, sans-serif !important;
+}
+.crns-root .crns-help-overlay .crns-help-tabs button[aria-selected="true"] {
+  border-color: var(--crns-accent) !important;
+  border-bottom-width: 3px !important;
+  background: color-mix(in srgb, var(--crns-accent) 8%, var(--crns-panel)) !important;
+}
+.crns-root .crns-help-overlay .crns-help-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.crns-root .crns-help-overlay .crns-help-rule {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--crns-border);
+  background: var(--crns-panel);
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.55;
+}
+.crns-root .crns-help-overlay .crns-help-rule .crns-help-sec { margin: 0 0 12px; }
+.crns-root .crns-help-overlay .crns-help-rule p {
+  margin: 0 0 12px;
+  color: var(--crns-text);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.crns-root .crns-help-overlay .crns-help-rule-summary { font-weight: 600; }
+.crns-root .crns-help-overlay .crns-help-rule-diagram {
+  margin: 10px 0 12px;
+  padding: 10px;
+  overflow-x: auto;
+  border-left: 3px solid var(--crns-accent);
+  background: var(--crns-bg);
+  color: var(--crns-text);
+  font: 14.5px/1.45 Consolas, "Courier New", monospace;
+  white-space: pre;
+}
+.crns-root .crns-help-overlay .crns-help-rule-points,
+.crns-root .crns-help-overlay .crns-help-rule-steps { margin: 0 0 12px; padding-left: 22px; }
+.crns-root .crns-help-overlay .crns-help-rule li { margin: 0 0 6px; }
+.crns-root .crns-help-overlay .crns-help-rule-example {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--crns-border);
+  border-left: 3px solid var(--crns-accent);
+  background: var(--crns-bg);
+}
+.crns-root .crns-help-overlay .crns-help-rule-example h4 {
+  margin: 0 0 8px;
+  font: 600 15px/1.5 "Segoe UI", Tahoma, sans-serif;
+  color: var(--crns-text);
+}
+.crns-root .crns-help-overlay .crns-help-rule-example .crns-help-rule-result {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--crns-border);
+  font-size: 15px;
+  font-weight: 600;
+}
+.crns-root .crns-help-overlay .crns-help-rule-table {
+  width: 100%;
+  margin: 12px 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+  background: var(--crns-panel);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.crns-root .crns-help-overlay .crns-help-rule-table th,
+.crns-root .crns-help-overlay .crns-help-rule-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--crns-border);
+  text-align: left;
+  color: var(--crns-text);
+}
+.crns-root .crns-help-overlay .crns-help-rule .crns-help-source,
+.crns-root .crns-help-overlay .crns-help-rule-links { font-size: 14.5px; line-height: 1.5; }
+.crns-root .crns-help-overlay .crns-help-rule-links { margin: 8px 0 0; padding-left: 18px; }
+.crns-root .crns-help-overlay .crns-help-rule-links a { color: var(--crns-accent); }
+
+@media (max-width: 900px) {
+  .crns-root .crns-help-overlay .crns-help-rules-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .crns-root .crns-help-overlay { padding: 8px; }
+  .crns-root .crns-help-overlay .crns-help-head { padding: 10px 12px; }
+  .crns-root .crns-help-overlay .crns-help-tabs { padding: 8px 12px; }
+  .crns-root .crns-help-overlay .crns-help-search { padding: 8px 12px; }
+  .crns-root .crns-help-overlay .crns-help-body { padding: 4px 12px 16px; }
+  .crns-root .crns-help-overlay .crns-help-entry { gap: 12px; padding: 12px; }
+  .crns-root .crns-help-overlay .crns-help-entry.framed { padding-left: 8px; }
+  .crns-root .crns-help-overlay .crns-help-portrait,
+  .crns-root .crns-help-overlay .crns-help-code { width: 36px; }
+  .crns-root .crns-help-overlay .crns-help-portrait { height: 36px; }
+}

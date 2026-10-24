@@ -1,0 +1,43 @@
+/* Solid depth-tested platforms/models; the HUD stays in screen space. */
+.crns-viewport:has(.crns-3d-host)::before,
+.crns-viewport:has(.crns-3d-host)::after { display: none; }
+.crns-3d-host { position: absolute; inset: 0; overflow: hidden; min-width: 0; min-height: 0; }
+.crns-3d-view { position: relative; width: 100%; height: 100%; overflow: hidden; isolation: isolate; background: #030d17; color: #d2ecf2; touch-action: none; }
+.crns-3d-view *, .crns-3d-view *::before, .crns-3d-view *::after { box-sizing: border-box; transition: none !important; animation: none !important; text-shadow: none !important; filter: none !important; }
+.crns-3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.crns-3d-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.crns-3d-host .crns-3d-view button { box-shadow: none !important; border-radius: 0 !important; line-height: 1.3 !important; height: auto !important; margin: 0 !important; min-height: 0; transform: none !important; filter: none !important; backdrop-filter: none !important; font-family: "Segoe UI", Tahoma, sans-serif !important; }
+.crns-3d-host .crns-3d-view .crns-3d-entity {
+  --sprite-color: #5aabbc;
+  position: absolute; display: flex !important; flex-direction: column; align-items: stretch !important; justify-content: flex-start !important;
+  width: 152px !important; max-width: 152px; padding: 6px 8px !important; gap: 3px;
+  pointer-events: auto; background: #061722f5 !important; color: #e0f3f6 !important;
+  border: 1px solid #254958 !important; border-left: 3px solid var(--sprite-color) !important; font-size: 14px !important; cursor: pointer;
+}
+.crns-3d-host .crns-3d-entity[hidden], .crns-3d-floor-label[hidden] { display: none !important; }
+.crns-3d-host .crns-3d-view .crns-3d-entity:hover { border-color: #a4dbe3 !important; }
+.crns-3d-host .crns-3d-view .crns-3d-entity.is-selected { border-color: #f1d16c !important; outline: 1px solid #f1d16c; outline-offset: 2px; }
+.crns-3d-host .crns-3d-view .crns-3d-entity.is-targeted { border-right: 4px solid #ed8a5c !important; }
+.crns-3d-host .crns-3d-view .crns-3d-entity.is-current-turn { outline: 2px solid #f1d16c; outline-offset: 2px; }
+.crns-3d-turn-badge { color: #f1d16c; font: bold 12px/1.3 "Segoe UI", sans-serif; text-align: left; }
+.crns-3d-used-badge { color: #b4c4ca; font: 11px/1.3 "Segoe UI", sans-serif; text-align: left; }
+.crns-3d-ident { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.crns-3d-avatar { width: 25px !important; height: 25px !important; max-width: 25px; border: 0 !important; object-fit: contain; flex: 0 0 25px; }
+.crns-3d-name { font-size: 15px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; text-align: left; }
+.crns-3d-stats { font: 12px/1.3 Consolas, monospace; color: #bdd8e0; text-align: left; }
+.crns-3d-meter { display: block; width: 100%; height: 4px; background: #203442; }
+.crns-3d-meter i { display: block; height: 4px; background: #73c6ce; }
+.crns-3d-owner { font: 11px/1.3 "Segoe UI", sans-serif; text-align: left; color: #bbc7d2; overflow-wrap: anywhere; }
+.crns-3d-badge { font: 10px/1.2 Consolas, monospace; text-align: left; color: #e8bb76; }
+.crns-3d-tether { font: 11px/1.2 Consolas, monospace; text-align: left; color: #91c8b2; }
+.crns-3d-demon { --sprite-color: #d6a64f; }
+.crns-3d-mini { width: 132px !important; max-width: 132px !important; }
+.crns-3d-host .crns-3d-view .is-derezzed { color: #8b9da6 !important; border-color: #35424c !important; }
+.crns-3d-floor-label { position: absolute; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; width: 270px; margin-left: -135px; padding: 7px; background: #06131ff5; border-bottom: 1px solid #456e80; color: #cde7ed; font: 14px/1.4 "Segoe UI", sans-serif; pointer-events: auto; }
+.crns-3d-host .crns-3d-view .crns-3d-move { padding: 4px 8px !important; border: 1px solid #4f8c9d !important; background: #122d3a !important; color: #d6eef1 !important; width: auto !important; font-size: 13px !important; }
+.crns-3d-toolbar { position: absolute; bottom: 28px; left: 10px; z-index: 4; display: flex; gap: 5px; }
+.crns-3d-host .crns-3d-toolbar button { padding: 7px 10px !important; border: 1px solid #456e80 !important; background: #0a202d !important; color: #d2ecf2 !important; width: auto !important; min-width: 34px; font-size: 14px !important; }
+.crns-3d-help { position: absolute; bottom: 5px; left: 10px; right: 10px; margin: 0; color: #a1b6c2; font: 11px/1.4 "Segoe UI", sans-serif; pointer-events: none; }
+.crns-3d-error { padding: 24px; color: #edaa83; font: 16px/1.5 "Segoe UI", sans-serif; }
+.crns-3d-view:focus-visible { outline: 1px solid #84b5c4; outline-offset: -2px; }
+.crns-3d-host[aria-busy="true"] { cursor: progress; }

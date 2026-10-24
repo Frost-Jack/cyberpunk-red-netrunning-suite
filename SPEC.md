@@ -238,12 +238,12 @@ export async function createIceActor(type, archName)               // Actor.crea
 export async function createDemonActor(type, archName)             // same for type "demon" (stats: rez, interface, actions, combatNumber)
 export async function deleteEntityActors(actorIds)                 // bulk delete, ignore missing
 // Rolls run off the backing actor (replicate cpr-black-ice-sheet.js _onRoll, lines ~130+):
-export async function rollEntityStat(actor, statName, event)        // BI: actor.createStatRoll(statName); demon: same API (check cpr-demon.js);
+export async function rollEntityStat(actor, statName, event, beforeRoll) // BI/demon: actor.createStatRoll(statName); optional spend after dialog confirmation;
                                                                     // cprRoll.setNetCombat(actor.name); handleRollDialog; roll(); entityData {actor:actor.id};
                                                                     // CPRChat.RenderRollCard
 export async function rollEntityDamage(actor, formula, event)       // new CPRRolls.CPRDamageRoll(actor.name, formula, "program"); setNetCombat; roll; card
                                                                     // (formula from constants by entity type — arch ICE actors have no program item)
-export async function rollDemonStatic(actor, cn)                    // no dice: styled chat card stating the Combat Number (see 8.3), speaker = actor
+// Demon Combat Number uses rollEntityStat(actor, "combatNumber", event, beforeRoll); see 8.3.
 export async function damageEntity(actorId, amount)                 // clamp + actor.update rez.value (call ONLY on GM side, from OPS)
 ```
 Phase-A agent MUST open and read `cpr-actor-sheet.js` `_onRoll` (line ~508), `cpr-character-sheet.js` `_cyberdeckProgramExecution` (~599), `cpr-cyberdeck.js` (62–230, 433–510) before writing the bridge, and replicate persistence side effects faithfully.
@@ -388,15 +388,15 @@ Hooks.on("getSceneControlButtons", (controls) => {
 All via system pipeline (bridge). Attack on ICE = interface ability roll vs ICE DEF; the module does NOT auto-resolve player-vs-ICE outcomes — it posts both cards; but see auto-roll.
 
 ### 8.2 Arch entity rolls
-Through the backing actor: `actor.createStatRoll(statName)` (blackIce/demon actor classes) + `setNetCombat(actor.name)` + system dialog/crit/DSN pipeline + `CPRChat.RenderRollCard` with real actor speaker — identical to rolling from the native Black ICE sheet. Damage: `CPRDamageRoll(actor.name, formulaFromConstants, "program")` + `.setNetCombat` — crits per system (two+ 6s → +5).
+Through the backing actor: `actor.createStatRoll(statName)` (blackIce/demon actor classes) + `setNetCombat(actor.name)` + system dialog/crit/DSN pipeline + `CPRChat.RenderRollCard` with real actor speaker. Damage: `CPRDamageRoll(actor.name, formulaFromConstants, "program")` + `.setNetCombat`; native program damage cards suppress Critical Injuries and their +5 bonus.
 
-### 8.3 Demon static CN
-Post a chat card (module template or simple HTML) — "«Imp» acts with Combat Number **14**" (localized), speaker alias = demon name. No dice.
+### 8.3 Demon Combat Number
+Roll the current backing Actor's Combat Number + 1d10 through `rollEntityStat(actor, "combatNumber", event, beforeRoll)` (Corebook p. 212). Spend the tracked action after dialog confirmation, before rolling. Cancel leaves the counter unchanged. This replaces the former fixed CN chat card; Interface + 1d10 remains the NET Zap/defense roll.
 
 ### 8.4 Auto-roll (setting `autoRollNPC`)
 When a player rolls **attack** (interface ability roll of kind "attack"/zap, or program `atk`) while having a target that is GM-controlled (`ice:`/`demon:` ref, or `runner:` participant with `userId:""`):
 - After the player's roll resolves, the player's client emits `notify {kind:"rollRequest", targetRef, vs:"defense"|"speed", attackerName, total}`.
-- Primary GM client (listener in main.js on the module notify hook): if `autoRollNPC` → executes the corresponding defensive roll (`rollEntityStat` def for ICE, CN card for demon, `bridge.rollInterface(actor,"defense")` for NPC runner) and posts a comparison chat line (module mini-card: attacker total vs defender total → HIT/MISS, localized).
+- Primary GM client (listener in main.js on the module notify hook): if `autoRollNPC` → executes the corresponding defensive roll (`rollEntityStat` def for ICE, `rollEntityStat(actor,"interface")` for demon, `bridge.rollInterface(actor,"defense")` for NPC runner) and posts a comparison chat line (module mini-card: attacker total vs defender total → HIT/MISS, localized).
 - If auto-roll off → GM gets a toast prompting to roll manually.
 
 ### 8.5 Damage application

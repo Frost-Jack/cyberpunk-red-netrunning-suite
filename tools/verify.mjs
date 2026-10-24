@@ -116,10 +116,14 @@ for (const k of refKeys) {
 /* ---- 6. CSS brace balance + class coverage (warning) ---- */
 const cssPath = join(ROOT, "styles", "netrunning.css");
 if (existsSync(cssPath)) {
-  const css = read(cssPath);
-  const opens = (css.match(/{/g) || []).length;
-  const closes = (css.match(/}/g) || []).length;
-  if (opens !== closes) fail(`[6] netrunning.css brace imbalance: { ${opens} / } ${closes}`);
+  const cssFiles = walk(join(ROOT, "styles"), (path) => path.endsWith(".css"));
+  const css = cssFiles.map((path) => {
+    const source = read(path);
+    const opens = (source.match(/{/g) || []).length;
+    const closes = (source.match(/}/g) || []).length;
+    if (opens !== closes) fail(`[6] ${relative(ROOT, path)} brace imbalance: { ${opens} / } ${closes}`);
+    return source;
+  }).join("\n");
   const cssClasses = new Set();
   for (const m of css.matchAll(/\.(crns-[a-z0-9-]+)/g)) cssClasses.add(m[1]);
   const tplClasses = new Set();

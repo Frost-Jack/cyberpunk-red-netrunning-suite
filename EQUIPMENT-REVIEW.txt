@@ -1,0 +1,196 @@
+АУДИТ ОБОРУДОВАНИЯ И ИНТЕГРАЦИИ, 2026-10-24
+
+Цель: Foundry v12, cyberpunk-red-core 0.92.4. Система прочитана, не изменялась.
+Сверка выполнена по тексту локальных PDF; номера ниже печатные, не индексы PDF.
+Ниже указано конечное поведение после исправлений этого аудита. Это не отчёт
+о запуске живой Foundry-сессии. Проверки Node используют реальные функции
+модуля с заглушками документов и окружения Foundry.
+
+СВЯЗЬ С СИСТЕМОЙ
+
+Активная дека: Actor.getEquippedCyberdeck(). Установленные предметы:
+system.installedItems.list и Container.getInstalledItems(). Список ID является
+источником истины; лежащее отдельно оборудование и другая дека бонусов не дают.
+Копия программы идентифицируется Item.id, состояние: system.isRezzed,
+system.rez.value/max, system.class, system.size, system.damage.standard/blackIce.
+Переносимые эффекты программ создаёт/переключает штатная система через
+deck.rezProgram()/derezProgram(); модуль не создаёт вторые AE для тех же бонусов.
+0 REZ не считается действующей защитой даже при отсутствующем defeated mirror.
+Destroyed хранится как блокировка Item в session, чтобы сохранить копию и ID.
+validateEquipmentLoadout(...,{excludedProgramIds}) позволяет не учитывать слоты
+уничтоженных копий при проверке восстановленного/действующего набора.
+
+Проверенные файлы системы:
+modules/actor/cpr-actor.js: getEquippedCyberdeck;
+modules/item/mixins/cpr-container.js: getInstalledItems;
+modules/item/types/cpr-cyberdeck.js: rezProgram, derezProgram;
+modules/datamodels/item/program-datamodel.js;
+modules/datamodels/item/cyberware-datamodel.js: isInstalledInActor;
+modules/datamodels/item/mixins/installable-schema.js: size, installedIn;
+modules/datamodels/item/armor-datamodel.js: equipped, SP, penalty.
+У Program нет Container/Upgradable mixin. Поэтому адресованное конкретной
+программе Invented Upgrade связывается явным module flag, а не подбором имени.
+
+ТОЧНОЕ РАСПОЗНАВАНИЕ
+
+Предмет: flags.cyberpunk-red-netrunning-suite.equipmentKey либо точный ключ/
+EN/RU alias каталога после нормализации регистра, пробелов и пунктуации.
+Программа: flags.cyberpunk-red-netrunning-suite.programKey либо точный alias.
+Поиск по подстроке и approximate matching не применяются. Переименованная
+программа с programKey продолжает получать нужное правило оборудования.
+customContent без явного equipmentKey/programKey не наследует стандартный
+эффект от совпадения названия с Armor, Killer, Insulated Wiring и т.п.
+
+ТАБЛИЦА ИНВЕНТАРИЗАЦИИ
+Механика | Источник/страница | Текущее поведение | Расхождение/решение
+
+Poor/Cyberdeck/Excellent | Core 196 | 5/7/9 общих слотов; native quality учитывается | RAW; известная дека проверяется по её базовой модели, неизвестная по native slots.
+Backup Drive | Core 208 | 2 слота; сохраняет non-ICE Attacker/Defender/Booster; одно Meat Action восстанавливает все доступные копии при допустимой итоговой загрузке | Исправлено: атомарная проверка вместимости, deckId/ID накопителей и сохранение spent once-per-run состояния; снятие накопителя удаляет записи; stale defeated снимается.
+DNA Lock | Core 208 | 2 слота; справка и profile.dnaLockDV=17 | Частично: модуль не моделирует биометрический ключ/замок или физический доступ к украденной деке; решение доступа остаётся GM/Electronics-Security Tech, а не NET Backdoor.
+Hardened Circuitry | Core 208 | 1 слот; GM equipment effects EMP/non-ICE disable/inoperable/destroy блокируются | Не блокирует Black ICE и не заменяет все сторонние модули EMP. Внешнее действие, минующее Suite, контролирует GM.
+Insulated Wiring | Core 208 | 1 слот; program/Black ICE ignite блокируется | Применяется к программному огню; произвольный физический пожар сам по себе не защищён.
+KRASH Barrier | Core 208 | 2 слота; программный forced safe/unsafe jackout блокируется | Не защищает от потери дальности, стены, физического выдёргивания кабеля.
+Range Upgrade | Core 208; FAQ 1.3,8 | 1 слот; profile.range=8 м | Профиль/справка. Нет автоматического измерения доступа, стен и архитектур сцены: точку и доступ подтверждает GM. Комбинация с Training Deck требует решения GM, см. ниже.
+Kirama Advanced | Midnight 3 | 5 общих; unsafe считается safe | Применяется через профиль и штатное отключение Suite.
+Kirama Entry | Midnight 3 | 5 Program slots; максимум по одному Attacker/Defender/Booster/Black ICE; unsafe safe | Два системных класса anti-personnel/anti-program объединяются в Attacker для проверки.
+Kirama Training | Midnight 3 | 5 Program slots; brain damage x2 после Armor; дальность в профиле 2 м | Дистанцию/стены проверяет GM, как обычную связь.
+Microtech Assault | Midnight 3 | 4 Black ICE Program slots +5 Hardware slots | Пулы не взаимозаменяемы; дополнительный слот сохраняет ограничения программ.
+Microtech Scout | Midnight 3 | 5 общих; одна бесплатная Pathfinder сразу после Jack In | scoutSerial сравнивается с монотонным scoutActionSerial: первое другое действие/перемещение закрывает возможность; отменённая reservation возвращает serial лишь без последующих действий.
+Microtech Warrior | Midnight 3 | 7 Program slots; одна неиспользованная Armor включается при Jack In без NET Action | Учитываются ID, once-per-run, once-per-round и запрет одновременных Armor.
+Raven Hummingbird | Midnight 3 | 2 Hardware slots; +1 NET Action за Turn | Бонус только используемой деки, без создания AE.
+Raven Kestrel 2 | Midnight 3-4 | 7 Program slots; до двух различных Speedy включаются при Jack In бесплатно | Native program activation; не выдаются фиктивные копии и не суммируется второй раз вручную SPEED.
+Raven Phoenix | Midnight 4 | 6 общих; safe exit восстанавливает уничтоженные на этой деке за этот run программы | Исправлено: старые destroyed до начала run не восстанавливаются; очищаются stale Backup/defeated записи. Unsafe сам по себе не чинит.
+SGI Kerberos | Midnight 4 | 6 Hellhound Program slots +5 Hardware slots | Точное имя/ключ; не включает сторонний ICE с похожим названием.
+SGI Verdant Knight | Midnight 4 | 9 Program slots только Sword/Shield | Ограничение сохраняется в дополнительных слотах; недопустимая Smithy-конверсия отклоняется.
+SGI Warlock's Book | Midnight 4 | 9 общих, без Attacker/Black ICE | Допускаются Booster/Defender и Hardware.
+Zetatech Kaliya | Midnight 4 | 3 только Flak +6 общих; Defender только Flak, ICE только Asp | Резерв Flak не превращается в произвольные Program slots.
+Zetatech MicroMate | Midnight 4 | 9 общих; без Defender; brain damage x2 | Не умножает REZ damage или физический урон CyberConductor.
+Zetatech Parraline 6000 | Midnight 4 | 3 Program +6 Hardware slots | Пулы отдельно.
+Aerie | Midnight 5 | 2 слота; Raven уничтожает случайного активного Defender вместо Derezzed | Сохраняется обычный brain damage Raven. Snaketrap/Function Driver могут предотвратить уничтожение, когда применимы.
+Bushido Accelerator | Midnight 5,7; Interface RED 3,41 | 3 слота; каждый экземпляр +2 SPD установленным Killer | DLC table 7 пишет 2, prose 5 пишет 3; повторная публикация IR3 41 подтверждает 3. Явный конфликт источника отмечен, не выдан за однозначную таблицу.
+Combat Recorder | Midnight 5 | 1 слот; failed Death Save другого runner той же архитектуры создаёт запись 5 минут/50eb | GM hook event дедуплицируется. Не анализируется/не генерируется настоящее видео; 50eb типичная цена, не автоматическая продажа.
+Defense Sequencer | Midnight 5; IR3 41 | 2 слота; после Derezzed/destroyed active Armor следующую неиспользованную копию включает в начале следующего Turn бесплатно | Никакого немедленного применения и обновления прежней Armor; учитываются once-per-round/run.
+Feline Instinct | Midnight 5 | 2 слота; +1d6 за каждое уничтожение именно этим Sabertooth до Jack Out | Счёт по ID ICE, не общий счётчик всех Sabertooth; сброс при Jack Out.
+Hangry Hangry Dragon | Midnight 5 | 1 слот; уничтоживший программу Dragon восстанавливает REZ до max | Обновляется его backing Actor и исходный Item; другой Dragon не лечится.
+Perfume Shoppe | Midnight 5 | 2 слота; каждый Skunk занимает 1 вместо 2 | Не складывает уменьшение ниже 1, не меняет цену других ICE.
+Smithy | Midnight 5 | 1 слот; Meat Action одновременно меняет все установленные действующие Sword/Banhammer местами | Исправлено: вместе с именем/ATK/damage обновляется явный programKey, сохраняется ID/usage; erased tombstone не меняется; недопустимый целевой класс деки отклоняется.
+Snaketrap | Midnight 6 | 1 слот; первое случайное program/ICE destruction предотвращается; копии не добавляют uses | Прямое целевое уничтожение и physical source не поглощаются; Function Driver применяется раньше и не тратит Snaketrap.
+Swamp Mist | Midnight 6 | 2 слота; Wisp 2d6; в деке ICE только Wisp | Другие d6/добавочные эффекты не увеличиваются; ограничения установки проверяются.
+Swifty Clean | Midnight 6 | 2 слота; два Cloak броска, оставить больший за 1 NET Action, один раз за run | Отмена двух диалогов возвращает reservation ровно один раз; не добавляет вторую обычную Cloak попытку.
+Bodyweight Suit | Core 208 | +1 Hardware slot надетой брони; SP/armor работает в системе | Не создаётся второй armor AE; несовместимость с Lotos отмечается; FBC coating подавляет этот дополнительный слот.
+Cyberdeck Cyberarm Option | Core 208,364 | +1 общий слот только своей встроенной деке | Проверяется предок контейнера, не наличие одноимённого cyberware в инвентаре.
+Integrated Cyberdeck Upgrade | Black Chrome 19 | +1 общий слот встроенной деке в ТОМ ЖЕ Cyberarm | Не распространяется на деку в другой руке/отдельном инвентаре.
+Lotos Netsuit | Black Chrome 31 | +1 Hardware slot; SP13/penalty -2 задаётся native armor; справка об обязательном снятии внешнего Hardware | Частично: модель не хранит, какой именно Hardware физически находится на костюме. Без явной привязки GM должен снять этот Item при снятии костюма; модуль не выбирает случайное hardware для удаления.
+CyberConductor | IR5 101; 12 Days of REDmas 5 | 3 деки; переключение Meat Action while jacked in, все активные исходной деки Derezzed, затем 3 direct HP | Исправлено: switch вне Jack In отклоняется. Программы не лечатся и не получают повторную бесплатную активацию; hardware других дек не разделяется.
+Integrated CyberConductor | IR5 101; REDmas 5 | те же switch rules без HP; дополнительные cyberware decks доступны | Требования FBC, 3 внутренних cyberware slots и единственный имплант проверяет GM при установке, система не имеет однозначного FBC field.
+FBC Integrated Bodyweight Coating | IR3 107 | НОВОЕ: по 2 shared Hardware-only slots за установленную копию; Hardware из coating доступно каждой cyberware-integrated deck | Отдельная вместимость shared pool, а не +2 обычных slots каждой деки; no Interface Plugs отмечается profile.requiresInterfacePlugs=false; Bodyweight Suit не добавляет слот. FBC prerequisite подтверждает GM.
+Function Driver | Invented Tech Upgrades 6 | НОВОЕ: одна конкретная 1-slot non-ICE программа не занимает слот и защищена от Program-effect destruction, но может Derezzed | Привязка по ID; не защищает все похожие программы и не создаёт AE. Решение, какой именно Item получает эффект, явно задаётся GM.
+Netsuit Insulation | Invented Tech Upgrades 7 | НОВОЕ: upgrade надетого Bodyweight/аналогичной брони даёт Insulated Wiring без Hardware slot | Native equipped и установленный upgrade либо явный upgradeKey; снятая броня бонуса не даёт.
+Super Slide | Invented Tech Upgrades 7 | НОВОЕ: активный улучшенный Speedy/Worm задаёт profile.slideAttempts=2 | Эффект не суммируется до 3+ от копий; 0REZ/снятая программа бонуса не даёт; Turn counter применяет data.js.
+Crunch Whistle | All About Agents 7 | НОВОЕ: 1 Hardware slot; profile.crunchWhistle=true только при установке | Условный +Interface Rank к Electronics/Security Tech именно hack Agents через Breacher; профиль/справка, не универсальный AE на каждый Electronics/Security Tech бросок. Физическое подключение Breacher и характер проверки определяет GM.
+Rock Lobster | Danger Gal Dossier 42 | Именованный специальный Balron, REZ30/Interface7/NET4/CN14, any NET Action | Справка, не четвёртый стандартный Demon и не автоматический spawn. GM создаёт именованного NPC и нужные ресурсы для расширенных действий.
+
+ЯВНАЯ ПРИВЯЗКА INVENTED UPGRADES
+
+Все flags ниже находятся в flags.cyberpunk-red-netrunning-suite.
+Function Driver: на Cyberdeck upgradeKey="functionDriver" или установленный
+ItemUpgrade с equipmentKey="functionDriver"; на той же Cyberdeck
+functionDriverProgramId="точный Item.id" выбранной установленной программы.
+Только non-Black ICE размера system.size=1 допустима для этого эффекта.
+Netsuit Insulation: upgradeKey="netsuitInsulation" на надетой Armor либо
+установленный в эту Armor ItemUpgrade с equipmentKey="netsuitInsulation".
+Super Slide: upgradeKey="superSlide" на конкретном Speedy Gonzalvez/Worm Item.
+Точные ID/flags сохраняются как данные предмета. Этот аудит не менял живые
+предметы пользователя. Нет отдельного автоматического выбора получателя
+Function Driver и нет созданных копий программ. Цена/DV/доступность изобретённого
+улучшения, работа Tech и корректность исходного предмета остаются решением GM.
+
+FBC SHARED HARDWARE
+
+Создать/использовать native cyberware FBC Integrated Bodyweight Coating,
+установленное в Actor (isInstalledInActor). Hardware устанавливается внутрь
+его system.installedItems.list. Для integrated deck проверяются предки
+cyberware контейнеров. Shared Hardware работает для этой деки и сохраняется
+при CyberConductor switch; отдельный Hardware другой деки не разделяется.
+Несколько coating складывают вместимость по 2. Это явное исключение источника,
+не разрешение произвольно делить оборудование между любыми деками.
+
+УСЛОВИЯ GM И ГРАНИЦЫ АВТОМАТИЗАЦИИ
+
+Расстояние/стены/access point, DNA биометрия, FBC eligibility, покупка, работа
+Tech, часы установки, внешнее Hardware Lotos и физические EMP, прошедшие через
+чужой модуль, не выводятся из имени предмета и не заявлены автоматически решёнными.
+Training Deck + Range Upgrade: Midnight 3 прямо требует 2 м для подключения
+и поддержания связи; Core 208 разрешает Range Upgrade подключаться с 8 м.
+Опубликованного официального разъяснения именно этой комбинации не найдено.
+Текущий технический расчёт остаётся 8 м, но profile.rangeRequiresGM=true
+обозначает спор приоритета правил: это не заявлено однозначным RAW решением.
+У самой Training нет Hardware slots; такая комбинация возможна через законный
+дополнительный слот, например надетый Bodyweight Suit.
+Пользовательские targets ограничены подмножеством допустимых целей native
+класса: anti-personnel против runner, anti-program против program/ICE/demon.
+Произвольные атаки между классами требуют ручного разрешения GM; описание
+пользовательского эффекта само по себе не меняет семантику native roll pipeline.
+Armour SP/penalty и штатные program AE обслуживает система, а не второй AE Suite.
+Breaking Your Stuff! 7 содержит опциональные Cyberdeck malfunctions, No Place
+Like Home 5 расширяет Maker для Netrunner в upgraded Server Room. Это отдельные
+подсистемы с состоянием HQ/maintenance, не постоянные бесплатные боевые бонусы.
+Going Quiet остаётся отдельным официальным опциональным набором, не базовым RAW.
+
+ИСТОЧНИКИ И ДОСТУПНОСТЬ
+
+Локальный каталог: C:/Users/trokh/Music/Books/Cyberpunk RED En.
+Полностью прочитаны релевантные страницы Core 196/201/203/207/208,
+Corebook Errata 1-4, Midnight 3-7, Black Chrome 19/31,
+Interface RED 3:39-42/103/107, IR5:101, Invented Tech Upgrades 6-7,
+The 12 Days of REDmas 5, No Place Like Home 5, All About Agents 7.
+Black Chrome Changelog проверен текстовым поиском: релевантных исправлений
+для Integrated Cyberdeck Upgrade/Lotos не найдено. Это не сплошная визуальная
+вычитка всех 70+ книг каталога; границы скана указаны честно.
+
+2026-10-24 официальная страница Downloads ссылается на FAQ v1.3:
+https://rtalsoriangames.com/downloadable-content/
+https://rtalsoriangames.com/wp-content/uploads/2021/07/RTG-CPR-CoreBookFAQv1.3.pdf
+FAQ p8 подтверждает range/walls и reset при выходе всех netrunners,
+p9 anti-program ambush trigger, p10 Electronics/Security Tech для изготовления
+program/hardware. Не все разъяснения сообщества являются текстом этого FAQ.
+Официальный Midnight также доступен онлайн:
+https://rtalsoriangames.com/wp-content/uploads/2022/05/RTG-CPR-DLC-MidnightwtheUpload.pdf
+
+Дополнительные источники, НЕ RAW:
+https://publish.obsidian.md/community-downlink/Home
+Home доступна, но выдаёт навигацию Obsidian; проверяемые ответы по механике
+из этой страницы не получены. Попытка FAQ/FAQ+Home вернула inaccessible.
+https://www.reddit.com/r/cyberpunkred/comments/12oj8e0
+Сниппет search доступен: различает owned/installed/rezzed и слот destroyed.
+Прямая загрузка страницы вернула Cache miss, поэтому это не полное чтение треда.
+https://www.reddit.com/r/cyberpunkred/comments/xssw2q
+Поиск доступен: обсуждение once-per-run Armor/Backup. Выводы проверены по
+Core 203/208; Reddit не использован для изменения RAW.
+
+ПРОВЕРКИ ЭТОЙ ЗОНЫ
+
+tools/equipment-runtime-test.mjs: 25 проверок реальных transition функций.
+Включены capacity отказ без частичного restore/Meat Action, сохранённый once-
+per-run расход, Phoenix prior-run boundary, explicit program identity, Smithy
+conversion flags, zero-REZ Armor и приоритет Function Driver перед Snaketrap.
+tools/equipment-test.mjs: 47 двуязычных entries, container isolation, restricted
+slot pools, ICE stats, pure run state, custom-content name isolation, Function
+Driver exact copy, Super Slide active/0REZ, Netsuit equipped boundary, FBC pool
+и declared size (включая 0) пользовательского Black ICE.
+Проверки UI/Foundry в живой сессии в эти результаты не включены.
+
+BASELINE -> CURRENT
+
+Исходные незакоммиченные пользовательские файлы сохранены. До этого аудита
+каталог содержал 42 entries, после 47. Новые 5 не добавляют бесплатные бонусы
+персонажам: они требуют native установки либо точной GM upgrade/target связи.
+Исходный runtime не проверял вместимость Backup restore, терял once-per-run
+состояние после нового Jack In, Phoenix чинил старые erased copies, Smithy
+оставлял старый явный programKey. Эти расхождения исправлены выше.
+Исходная бесплатная Scout оставалась до следующего Turn; текущая проверка
+привязана к последовательности действий. Бонусы 0REZ Armor от одного active
+флага исключены. FBC shared Backup теперь сохраняет ID настоящего накопителя
+из shared pool, а не пустой список оборудования только исходной деки.
+Content flags не наследуют RAW слоты/названные эффекты от имени: custom ICE
+size=5 занимает 5, size=0 занимает 0, а не принудительные RAW 2 slots.

@@ -22,6 +22,8 @@
     {{/if}}
     {{#if actions.target.damageBox}}
     <div class="crns-damagebox">
+      {{#if actions.target.damageBox.sourceName}}<span>{{actions.target.damageBox.sourceName}}</span>{{/if}}
+      {{#if actions.target.damageBox.canDestroy}}<label><input type="checkbox" name="destroyprogram">{{localize "CRNS.Rules.Destroy"}}</label>{{/if}}
       <input type="number" name="dmgamount" value="{{actions.target.damageBox.amount}}" min="0" />
       <button type="button" class="crns-btn" data-action="apply-target-damage"
               data-target-ref="{{actions.target.damageBox.ref}}">
@@ -29,6 +31,18 @@
       </button>
     </div>
     {{/if}}
+    {{#if actions.target.canEffects}}
+    <button type="button" class="crns-btn" data-action="target-special-effect" data-target-ref="{{actions.target.ref}}"><i class="fas fa-bolt"></i> {{localize "CRNS.Equipment.ApplyEffect"}}</button>
+    {{/if}}
+    {{#each actions.target.runnerEffects}}<div class="crns-content-effect-note">{{label}}
+      <button type="button" class="crns-mini" data-action="clear-runner-effect" data-pid="{{pid}}" data-key="{{key}}">{{localize "CRNS.Content.ClearEffect"}}</button>
+    </div>{{/each}}
+    {{#each actions.target.contentEffects}}
+    <div class="crns-content-effect-note"><strong>{{label}}</strong><p>{{description}}</p>
+      {{#if canApply}}<button type="button" class="crns-btn" data-action="content-apply-effect" data-index="{{@index}}">{{localize "CRNS.Content.ApplyEffect"}}</button>
+      {{else}}<small>{{localize "CRNS.Content.Manual"}}</small>{{/if}}
+    </div>
+    {{/each}}
   </div>
   {{else}}
   <div class="crns-zone-empty">

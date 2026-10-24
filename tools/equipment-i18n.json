@@ -1,0 +1,406 @@
+{
+  "en": {
+    "Equipment": {
+      "Title": "Equipment reference",
+      "Installed": "Used deck / installed equipment",
+      "Groups": {
+        "coreDecks": "Core cyberdecks",
+        "coreHardware": "Core hardware",
+        "midnightDecks": "Midnight: cyberdecks",
+        "midnightHardware": "Midnight: hardware",
+        "accessories": "Suits, cyberware and CyberConductors",
+        "specialDemons": "Special Demons (reference only)"
+      },
+      "poorCyberdeck": {
+        "name": "Poor Quality Cyberdeck",
+        "effect": "5 shared Program/Hardware slots."
+      },
+      "cyberdeck": {
+        "name": "Cyberdeck",
+        "effect": "7 shared Program/Hardware slots."
+      },
+      "excellentCyberdeck": {
+        "name": "Excellent Quality Cyberdeck",
+        "effect": "9 shared Program/Hardware slots."
+      },
+      "backupDrive": {
+        "name": "Backup Drive",
+        "effect": "2 slots. Saves destroyed non-Black ICE programs. One Meat Action reinstalls saved programs if slots suffice, preserving their spent once-per-run state. Uninstalling the drive erases its contents."
+      },
+      "dnaLock": {
+        "name": "DNA Lock",
+        "effect": "2 slots. A locked deck requires its biometric key or a DV17 Electronics/Security Tech check to access."
+      },
+      "hardenedCircuitry": {
+        "name": "Hardened Circuitry",
+        "effect": "1 slot. EMP and non-Black ICE program effects cannot disable, render inoperable or destroy the deck."
+      },
+      "insulatedWiring": {
+        "name": "Insulated Wiring",
+        "effect": "1 slot. Program effects cannot ignite the deck or the user's clothing."
+      },
+      "krashBarrier": {
+        "name": "KRASH Barrier",
+        "effect": "2 slots. Immune to program effects that force a safe or unsafe Jack Out; does not prevent disconnection from other causes."
+      },
+      "rangeUpgrade": {
+        "name": "Range Upgrade",
+        "effect": "1 slot. Connection range becomes 8 m from an access point."
+      },
+      "kiramaAdvanced": {
+        "name": "Kirama Advanced Deck",
+        "effect": "5 shared slots. Treat every unsafe Jack Out as safe."
+      },
+      "kiramaEntry": {
+        "name": "Kirama Entry Deck",
+        "effect": "5 Program-only slots; at most one each of Attacker, Defender, Booster and Black ICE. Treat unsafe Jack Out as safe."
+      },
+      "kiramaTraining": {
+        "name": "Kirama Training Deck",
+        "effect": "5 Program-only slots. Stay within 2 m of the access point. All direct brain damage is doubled."
+      },
+      "microtechAssault": {
+        "name": "Microtech Assault",
+        "effect": "4 Black ICE-only Program slots and 5 Hardware-only slots."
+      },
+      "microtechScout": {
+        "name": "Microtech Scout",
+        "effect": "5 shared slots. Immediately after Jack In, use Pathfinder once without spending a NET Action."
+      },
+      "microtechWarrior": {
+        "name": "Microtech Warrior",
+        "effect": "7 Program-only slots. Immediately after Jack In, activate one installed Armor without a NET Action."
+      },
+      "hummingbird": {
+        "name": "Raven Microcyb Hummingbird",
+        "effect": "2 Hardware-only slots. Gain +1 NET Action each turn."
+      },
+      "kestrel2": {
+        "name": "Raven Microsyb Kestrel 2",
+        "effect": "7 Program-only slots. Immediately after Jack In, activate up to two installed Speedy Gonzalves without a NET Action."
+      },
+      "phoenix": {
+        "name": "Raven Microcyb Phoenix",
+        "effect": "6 shared slots. Safe Jack Out restores all programs destroyed on this deck during the run."
+      },
+      "kerberos": {
+        "name": "SGI Technologies Kerberos",
+        "effect": "6 Hellhound-only Program slots and 5 Hardware-only slots."
+      },
+      "verdantKnight": {
+        "name": "SGI Technologies Verdant Knight",
+        "effect": "9 Program-only slots; only Sword and Shield may be installed."
+      },
+      "warlocksBook": {
+        "name": "SGI Technologies Warlock's Book",
+        "effect": "9 shared slots. No Attacker or Black ICE programs may be installed."
+      },
+      "kaliya": {
+        "name": "Zetatech Kaliya",
+        "effect": "3 Flak-only slots plus 6 shared slots. The only permitted Defender is Flak; the only permitted Black ICE is Asp."
+      },
+      "microMate": {
+        "name": "Zetatech MicroMate",
+        "effect": "9 shared slots. No Defenders. All direct brain damage is doubled."
+      },
+      "parraline6000": {
+        "name": "Zetatech Parraline 6000",
+        "effect": "3 Program-only slots and 6 Hardware-only slots."
+      },
+      "aerie": {
+        "name": "Aerie",
+        "effect": "2 slots. Installed Raven attacks destroy a random active enemy Defender instead of derezzing it."
+      },
+      "bushidoAccelerator": {
+        "name": "Bushido Accelerator",
+        "effect": "3 slots per description (p.5; table on p.7 says 2). Each installed unit grants all installed Killer Black ICE +2 SPD."
+      },
+      "combatRecorder": {
+        "name": "Combat Recorder",
+        "effect": "1 slot. Another netrunner's failed Death Save in your NET Architecture saves an anonymized five-minute recording, typically worth 50eb."
+      },
+      "defenseSequencer": {
+        "name": "Defense Sequencer",
+        "effect": "2 slots. When active Armor is derezzed or destroyed, automatically activate an installed Armor not yet used this run at the start of your next turn, for no NET Action."
+      },
+      "felineInstinct": {
+        "name": "Feline Instinct",
+        "effect": "2 slots. Each program destroyed by an installed Sabertooth adds +1d6 to that Sabertooth's damage until Jack Out."
+      },
+      "hangryHangryDragon": {
+        "name": "Hangry Hangry Dragon",
+        "effect": "1 slot. An installed Dragon restores its REZ to maximum whenever it destroys a program."
+      },
+      "perfumeShoppe": {
+        "name": "Perfume Shoppe",
+        "effect": "2 slots. Installed Skunk Black ICE costs 1 Program slot rather than 2."
+      },
+      "smithy": {
+        "name": "Smithy",
+        "effect": "1 slot. One Meat Action simultaneously converts ALL installed Sword programs to Banhammer and ALL installed Banhammer programs to Sword."
+      },
+      "snaketrap": {
+        "name": "Snaketrap",
+        "effect": "1 slot. Once per run prevents the first Black ICE/program effect that would destroy a random installed program. Multiple copies do not add uses."
+      },
+      "swampMist": {
+        "name": "Swamp Mist",
+        "effect": "2 slots. Installed Wisp deals 2d6 instead of 1d6. No Black ICE other than Wisp may be installed."
+      },
+      "swiftyClean": {
+        "name": "Swifty Clean",
+        "effect": "2 slots. Cloak rolls twice for one NET Action and keeps the higher total, but Cloak can only be used once per run."
+      },
+      "bodyweightSuit": {
+        "name": "Bodyweight Suit",
+        "effect": "Worn head/body SP11 armor. Houses a deck and adds one Hardware-only slot."
+      },
+      "cyberdeckCyberarmOption": {
+        "name": "Cyberdeck Cyberarm Option",
+        "effect": "Cyberarm-installed deck gains one shared Program/Hardware slot. The deck's Program restrictions still apply."
+      },
+      "integratedCyberdeckUpgrade": {
+        "name": "Integrated Cyberdeck Upgrade",
+        "effect": "Adds one shared slot to a Cyberarm-integrated deck on the SAME Cyberarm only."
+      },
+      "lotosNetsuit": {
+        "name": "Lotos Netsuit",
+        "effect": "One external Hardware-only slot; its hardware uninstalls on removal. Head and body SP13, REF/DEX/MOVE -2. Cannot combine with Bodyweight Suit or similar armor/fashion. Includes an excellent deck."
+      },
+      "cyberConductor": {
+        "name": "Zetatech CyberConductor",
+        "effect": "Holds up to 3 decks. While jacked in, one Meat Action switches decks, derezzes ALL active programs including Black ICE, then deals 3 direct HP damage. Decks never share programs/hardware. Installing a deck takes 1 hour."
+      },
+      "integratedCyberConductor": {
+        "name": "Zetatech CyberConductor, Integrated",
+        "effect": "FBC-only Borgware, 3 Internal Body slots, maximum one. Also connects decks installed as cyberware in the FBC. Same switching rules but no HP damage; contained decks count as cyberware-integrated."
+      },
+      "fbcBodyweightCoating": {
+        "name": "FBC Integrated Bodyweight Coating",
+        "effect": "FBC-only external cyberware. Each installation adds 2 shared Hardware-only slots benefiting all cyberware-integrated decks, which no longer need Interface Plugs. Cannot benefit from a Bodyweight Suit."
+      },
+      "functionDriver": {
+        "name": "Function Driver",
+        "effect": "Invented upgrade installed on a deck. One selected 1-slot non-Black ICE program takes no slot and cannot be destroyed by Program effects; it can still be derezzed."
+      },
+      "netsuitInsulation": {
+        "name": "Netsuit Insulation",
+        "effect": "Invented upgrade installed on Bodyweight Suit or similar worn armor. Grants Insulated Wiring without using its Hardware-only slot."
+      },
+      "superSlide": {
+        "name": "Super Slide",
+        "effect": "Invented upgrade to Speedy Gonzalvez or Worm. While that upgraded program is active, permits two Slide attempts per turn."
+      },
+      "crunchWhistle": {
+        "name": "Crunch Whistle",
+        "effect": "1 slot. Connects the cyberdeck to a Breacher. Add Interface Rank to Electronics/Security Tech checks made to hack Agents; requires that specific setup and task."
+      },
+      "rockLobster": {
+        "name": "Rock Lobster",
+        "effect": "CrAB Lord's unique Balron: REZ30, Interface7, 4 NET Actions, Combat Number14. Can perform any NET Action a netrunner can. Not a fourth standard Demon and never automatically installed."
+      }
+    }
+  },
+  "ru": {
+    "Equipment": {
+      "Title": "Справочник оборудования",
+      "Installed": "Используемая дека / установленное оборудование",
+      "Groups": {
+        "coreDecks": "Базовые кибердеки",
+        "coreHardware": "Базовое оборудование",
+        "midnightDecks": "Полночь: кибердеки",
+        "midnightHardware": "Полночь: оборудование",
+        "accessories": "Костюмы, киберимпланты и киберкондукторы",
+        "specialDemons": "Особые Демоны (только справка)"
+      },
+      "poorCyberdeck": {
+        "name": "Кибердека низкого качества",
+        "effect": "5 общих слотов для программ и оборудования."
+      },
+      "cyberdeck": {
+        "name": "Кибердека",
+        "effect": "7 общих слотов для программ и оборудования."
+      },
+      "excellentCyberdeck": {
+        "name": "Кибердека превосходного качества",
+        "effect": "9 общих слотов для программ и оборудования."
+      },
+      "backupDrive": {
+        "name": "Резервный накопитель",
+        "effect": "2 слота. Сохраняет уничтоженные программы, кроме чёрного льда. Мясное действие восстанавливает сохранённые программы при наличии слотов, не сбрасывая ограничения за забег. Снятие накопителя стирает записи."
+      },
+      "dnaLock": {
+        "name": "ДНК-замок",
+        "effect": "2 слота. Запертую деку открывает биометрический ключ либо проверка электроники/взлома техники СЛ17."
+      },
+      "hardenedCircuitry": {
+        "name": "Укреплённые схемы",
+        "effect": "1 слот. ЭМИ и эффекты программ, не являющихся чёрным льдом, не могут отключить, вывести из строя или уничтожить деку."
+      },
+      "insulatedWiring": {
+        "name": "Изолированная проводка",
+        "effect": "1 слот. Эффекты программ не могут поджечь деку или одежду владельца."
+      },
+      "krashBarrier": {
+        "name": "Барьер KRASH",
+        "effect": "2 слота. Защищает от эффектов программ, принуждающих к безопасному или небезопасному отключению. Не предотвращает разрыв связи по другим причинам."
+      },
+      "rangeUpgrade": {
+        "name": "Увеличитель дальности",
+        "effect": "1 слот. Дальность связи с точкой доступа составляет 8 м."
+      },
+      "kiramaAdvanced": {
+        "name": "Продвинутая дека Кирама",
+        "effect": "5 общих слотов. Любое небезопасное отключение считается безопасным."
+      },
+      "kiramaEntry": {
+        "name": "Начальная дека Кирама",
+        "effect": "5 слотов только для программ; не более одной программы атаки, защиты, усиления и чёрного льда. Небезопасное отключение считается безопасным."
+      },
+      "kiramaTraining": {
+        "name": "Учебная дека Кирама",
+        "effect": "5 слотов только для программ. Для связи нужно оставаться в 2 м от точки доступа. Прямой урон мозгу удваивается."
+      },
+      "microtechAssault": {
+        "name": "«Штурм» от Майкротех",
+        "effect": "4 слота для программ только чёрного льда и 5 слотов только для оборудования."
+      },
+      "microtechScout": {
+        "name": "«Разведчик» от Майкротех",
+        "effect": "5 общих слотов. Сразу после подключения можно один раз применить Следопыта без сетевого действия."
+      },
+      "microtechWarrior": {
+        "name": "«Воин» от Майкротех",
+        "effect": "7 слотов только для программ. Сразу после подключения можно включить одну установленную программу «Доспехи» без сетевого действия."
+      },
+      "hummingbird": {
+        "name": "Колибри",
+        "effect": "2 слота только для оборудования. +1 сетевое действие каждый ход."
+      },
+      "kestrel2": {
+        "name": "Пустельга 2",
+        "effect": "7 слотов только для программ. Сразу после подключения можно включить до двух установленных «Быстрых Гонзалвесов» без сетевого действия."
+      },
+      "phoenix": {
+        "name": "Феникс",
+        "effect": "6 общих слотов. При безопасном отключении восстанавливаются все программы, уничтоженные на этой деке за забег."
+      },
+      "kerberos": {
+        "name": "Кербер",
+        "effect": "6 слотов для программ только «Адская гончая» и 5 слотов только для оборудования."
+      },
+      "verdantKnight": {
+        "name": "Юный рыцарь",
+        "effect": "9 слотов только для программ «Меч» и «Щит»."
+      },
+      "warlocksBook": {
+        "name": "Фолиант чернокнижника",
+        "effect": "9 общих слотов. Нельзя устанавливать атакующие программы и чёрный лёд."
+      },
+      "kaliya": {
+        "name": "Калия",
+        "effect": "3 слота только для «Фейерверка» и 6 общих слотов. Из программ защиты разрешён только «Фейерверк», из чёрного льда только «Аспид»."
+      },
+      "microMate": {
+        "name": "МикроДруг",
+        "effect": "9 общих слотов. Программы защиты запрещены. Прямой урон мозгу удваивается."
+      },
+      "parraline6000": {
+        "name": "Парралайн 6000",
+        "effect": "3 слота только для программ и 6 слотов только для оборудования."
+      },
+      "aerie": {
+        "name": "Воронье гнездо",
+        "effect": "2 слота. Установленный «Ворон» уничтожает случайную активную программу защиты противника вместо дереса."
+      },
+      "bushidoAccelerator": {
+        "name": "Ускоритель бусидо",
+        "effect": "3 слота по описанию (с.5; в таблице на с.7 указано 2). Каждая установленная копия даёт всему установленному чёрному льду «Убийца» +2 СКО."
+      },
+      "combatRecorder": {
+        "name": "Регистратор боя",
+        "effect": "1 слот. При провале испытания против смерти другим нетраннером в той же архитектуре сохраняет анонимизированную запись последних пяти минут стоимостью обычно 50eb."
+      },
+      "defenseSequencer": {
+        "name": "Защитный секвенсор",
+        "effect": "2 слота. После дереса или уничтожения активных «Доспехов» в начале следующего хода бесплатно включает установленную копию, ещё не использованную за забег."
+      },
+      "felineInstinct": {
+        "name": "Кошачий инстинкт",
+        "effect": "2 слота. Каждая программа, уничтоженная установленным «Саблезубом», даёт именно ему +1d6 урона до отключения."
+      },
+      "hangryHangryDragon": {
+        "name": "Голодный и злой дракон",
+        "effect": "1 слот. Установленный «Дракон» восстанавливает все РЕС при каждом уничтожении программы."
+      },
+      "perfumeShoppe": {
+        "name": "Парфюмерный бутик",
+        "effect": "2 слота. Установленный чёрный лёд «Скунс» занимает 1 слот программы вместо 2."
+      },
+      "smithy": {
+        "name": "Кузня",
+        "effect": "1 слот. За одно мясное действие одновременно превращает ВСЕ установленные «Мечи» в «Банхаммеры» и ВСЕ «Банхаммеры» в «Мечи»."
+      },
+      "snaketrap": {
+        "name": "Ловушка со змеями",
+        "effect": "1 слот. Раз за забег предотвращает первый эффект программы или чёрного льда, уничтожающий случайную установленную программу. Несколько копий не дают дополнительных применений."
+      },
+      "swampMist": {
+        "name": "Болотный туман",
+        "effect": "2 слота. Установленный «Дух» наносит 2d6 вместо 1d6. Устанавливать другой чёрный лёд нельзя."
+      },
+      "swiftyClean": {
+        "name": "Был да сплыл",
+        "effect": "2 слота. Маскировка бросается дважды за одно сетевое действие с выбором большего результата, но доступна лишь один раз за забег."
+      },
+      "bodyweightSuit": {
+        "name": "Костюм нетраннера",
+        "effect": "Броня головы и тела СП11. Вмещает деку и добавляет один слот только для оборудования."
+      },
+      "cyberdeckCyberarmOption": {
+        "name": "Кибердека в киберруке",
+        "effect": "Установленная в киберруку дека получает общий слот для программы или оборудования. Ограничения деки для программ сохраняются."
+      },
+      "integratedCyberdeckUpgrade": {
+        "name": "Улучшение встроенной кибердеки",
+        "effect": "Добавляет общий слот встроенной деке только в той же киберруке."
+      },
+      "lotosNetsuit": {
+        "name": "Нет-костюм Лотос",
+        "effect": "Один внешний слот только для оборудования; при снятии костюма оборудование снимается с деки. СП13 головы и тела, РЕА/ЛВК/СКО -2. Нельзя сочетать с костюмом нетраннера и подобной бронёй/одеждой. В комплекте превосходная дека."
+      },
+      "cyberConductor": {
+        "name": "Киберкондуктор Зетатех",
+        "effect": "Вмещает до 3 дек. В сети за мясное действие переключает деку, дересает ВСЕ активные программы, включая чёрный лёд, затем наносит 3 урона напрямую ОЗ. Деки не разделяют программы и оборудование. Установка деки занимает час."
+      },
+      "integratedCyberConductor": {
+        "name": "Встроенный киберкондуктор Зетатех",
+        "effect": "Борг-оборудование только для полной конверсии: 3 внутренних слота, не более одного. Подключает также деки в киберимплантах тела. Переключение дересает программы, но не наносит урона; деки внутри считаются встроенными киберимплантами."
+      },
+      "fbcBodyweightCoating": {
+        "name": "Встроенное покрытие Bodyweight для FBC",
+        "effect": "Внешний киберимплант только для FBC. Каждая копия добавляет 2 общих слота оборудования для всех встроенных дек и заменяет интерфейсные разъёмы. Исключает бонус костюма Bodyweight."
+      },
+      "functionDriver": {
+        "name": "Функциональный драйвер",
+        "effect": "Изобретённое улучшение деки. Одна выбранная программа не-чёрного льда размером 1 слот не занимает слот и защищена от уничтожения эффектами программ; дерес остаётся возможен."
+      },
+      "netsuitInsulation": {
+        "name": "Изоляция нет-костюма",
+        "effect": "Изобретённое улучшение костюма Bodyweight или аналогичной надетой брони. Даёт эффект изолированной проводки, не занимая слот оборудования костюма."
+      },
+      "superSlide": {
+        "name": "Суперскольжение",
+        "effect": "Изобретённое улучшение Speedy Gonzalvez или Worm. Пока улучшенная программа активна, разрешает две попытки Slide за ход."
+      },
+      "crunchWhistle": {
+        "name": "Кранч-свисток",
+        "effect": "1 слот. Соединяет кибердеку с Breacher. Добавляет ранг Интерфейса к проверкам электроники/взлома техники именно для взлома агентов при таком подключении."
+      },
+      "rockLobster": {
+        "name": "Рок-Лобстер",
+        "effect": "Уникальный Балрон Краб-Лорда: РЕС30, Интерфейс7, 4 сетевых действия, боевое число14. Может выполнять любые сетевые действия нетраннера. Не является четвёртым стандартным Демоном и не устанавливается автоматически."
+      }
+    }
+  }
+}

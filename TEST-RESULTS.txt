@@ -1,0 +1,731 @@
+Final offline verification, 2026-10-24. Foundry12.343 / CPR0.92.4. Real world documents unchanged.
+
+TEST verify
+WARN  [6] class crns-actions- used in templates but not styled in CSS
+OK — all checks passed (28 warning(s)).
+WARN  [6] class crns-chip-btn{{#if used in templates but not styled in CSS
+WARN  [6] class crns-prog- used in templates but not styled in CSS
+WARN  [6] class crns-progclass-{{#if used in templates but not styled in CSS
+WARN  [6] class crns-mini{{#if used in templates but not styled in CSS
+WARN  [6] class crns-stage{{#if used in templates but not styled in CSS
+WARN  [6] class crns-floor-wrap{{#if used in templates but not styled in CSS
+WARN  [6] class crns-fog-wrap used in templates but not styled in CSS
+WARN  [6] class crns-floor{{#if used in templates but not styled in CSS
+WARN  [6] class crns-fm-lock{{#if used in templates but not styled in CSS
+WARN  [6] class crns-runner-chip{{#if used in templates but not styled in CSS
+WARN  [6] class crns-prog-{{#if used in templates but not styled in CSS
+WARN  [6] class crns-editor-demons{{#if used in templates but not styled in CSS
+WARN  [6] class crns-editor-savebtn{{#if used in templates but not styled in CSS
+WARN  [6] class crns-chip{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-tab-panel used in templates but not styled in CSS
+WARN  [6] class crns-help-ice{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-prog{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-demon used in templates but not styled in CSS
+WARN  [6] class crns-help-rules used in templates but not styled in CSS
+WARN  [6] class crns-runner-row{{#if used in templates but not styled in CSS
+WARN  [6] class crns-runner-rank used in templates but not styled in CSS
+WARN  [6] class crns-runner-acts used in templates but not styled in CSS
+WARN  [6] class crns-runner-pos used in templates but not styled in CSS
+WARN  [6] class crns-tab{{#if used in templates but not styled in CSS
+WARN  [6] class crns-watch-toggle used in templates but not styled in CSS
+WARN  [6] class crns-watch-leave used in templates but not styled in CSS
+WARN  [6] class crns-watch-target{{#if used in templates but not styled in CSS
+EXIT 0; elapsed 2698ms
+
+TEST rules-test
+OK #2 0 REZ retains Rezzed/native item and backing actor, no derez/reset
+OK #2 destroy requires source effect; Dragon/Killer/Sabertooth and GM explicit work
+OK #2 backing ICE defeat retained, explicit deactivation deletes it; GM restore works
+OK equipment destruction prevention/source hooks preserve random and sourceRef
+OK #3 Defender once per copy per run, one name active, another copy allowed after deactivate
+OK #4 Attacker integrated attack consumes exactly one action; no damage required
+OK #4 cancelled native attack refunds reservation and once/run usage
+OK activation owner checks, target class, action checks and concurrency
+OK #5 program round use survives Jack In/Out, same-round reset and reconnect
+OK #5 two installed copies have independent round allowances
+OK #6 Slide attempt once/turn, password boundary and successful adjacent move
+OK #6 opposed Slide tie fails, greater total moves exactly one edge
+OK #7 Virus GM DV/action count, multiturm accumulation, equality fails, roll becomes removal DV
+OK fixed-DV boundary checks use strictly greater, Pathfinder sees equal-DV password
+OK #8 node once per turn from any floor and action spent only on success
+OK #9 Scanner is a tracked Meat Action, never a NET action or free second action
+OK #10 traps forbidden in started combat, allowed outside; #13 deploy has no SPEED test
+OK #11 equal initiative remains unchanged, queueTs used (never +1)
+OK #12 actual bridge: program DEF and BI ATK stat rolls exclude Interface, keep native dialog/Luck
+OK #1 anti-program ambush requires eligible Rezzed program, chooses program not runner
+OK SPEED tie avoids, loss selects pending program, cards never apply HP damage
+OK source metadata survives stash/apply and runner hook, equipment proxy forwards options
+OK 0-base-REZ Attacker is not defeated; actual defeated flag disables rolls
+OK disabled deck blocks action spending and ability results
+OK random destruction excludes broken copies and retains source completion
+OK native Interface Luck is consumed on the actor after a completed roll
+OK removed Backup Drive loses stored copies even if the item is reinstalled
+OK disconnect does not silently restore destroyed programs
+OK attacker visuals preserve exact source/target, hit/miss and architecture without changing HP
+OK deferred player defence carries its attack target into the visual reply
+OK custom snapshots drive native bridge identity, targets, cost, limits and exact cancelled refund
+OK custom target subset rejects non-ICE programs and runner before action spend
+OK custom Black ICE ambush honors target subset and native class despite renamed stock name
+OK Super Slide allows two resolved attempts, blocks pending/third and resets on next turn
+OK Scout action serial expires on action/move and survives reconnect
+OK Jack Out releases only this runner's Control Nodes and re-JackIn cannot reuse them
+OK GM removes a single mistaken effect while players cannot clear it
+OK program availability explains custom cost and per-run lock without spending actions
+OK closing or rerendering during action-bar resize removes window listeners
+OK last runner resets password defenses while an ally holds the run and persistent markers survive
+OK deleting a backing Black ICE can retire its surviving Item without an equipped deck
+41 rules regression groups passed.
+EXIT 0; elapsed 201ms
+
+TEST branching-test
+OK legacy and single-floor topology use null entry and deepest root
+OK branch at depth 1, forward references, and unrestricted branch count
+OK reject malformed, disconnected, cyclic, duplicate, early and tied graphs
+OK fog preserves legacy max/reveal and exact branch history without sibling leaks
+OK Pathfinder walks path-distance and stops only a blocked subtree
+OK actual move operations enforce owner adjacency, no skips/sibling teleport
+OK password blocks child steps only, even with reversed display order
+OK legacy migration alone derives visited range
+OK connect uses actual entry and resets visited/revealed history
+OK actual Pathfinder keeps DV > total comparator and branch-ID reveal
+OK actual Virus uses unique deepest leaf, not last array element
+OK update preserves runner/program identities and prunes removed fog IDs
+OK linear-to-tree update migrates old fog by identity before reordering
+OK invalid save/import/duplicate cause no actor side effects
+OK copy/import remap parent IDs including forward references and actor snapshots
+OK import checks caps before creating actors and keeps one-floor legacy archives
+OK actual editor reorder freezes links and insert reconnects children
+OK actual editor branches, warns on tied save, reconnects delete and rejects early forks
+PASS 18 branching regressions (pure graph + actual operations/editor with Foundry mocks).
+EXIT 0; elapsed 122ms
+
+TEST canvas-test
+OK player branch fog never reveals sibling content
+OK frontier has one stub per branch, only adjacent stub is traversable
+OK fork offers each hidden child separately
+OK demon has its own floor section, target metadata retained
+OK spectator sees exactly the player's branch visibility
+OK GM sees full tree and unique deepest bottom
+OK reference highlight uses same branch fog
+OK watching a named ally uses only that runner's view
+OK editing gaps into history positions every known component
+OK legacy linear visited/reveal remain visible
+OK explicit reordered linear tree displays from entry to bottom
+OK rerender clears removed or hidden hover without changing program selection
+OK target callbacks validate current visible VM, including program minis
+OK empty architecture clears hover and rejects stale target callback
+14 canvas/reference checks passed.
+EXIT 0; elapsed 121ms
+
+TEST spectator-test
+OK Watch entry: new, roster, disconnected, connected; permission on/off
+OK target filtering and actor+architecture labels
+OK server permissions and no impersonation
+OK initial entry works for every own-runner state with freeMove false
+OK legacy user-id slot collision preserves own runner
+OK follow target must be an active player in the selected architecture
+OK freeMove gates cross-architecture switches only
+OK leave returns to untouched own runner with permission disabled
+OK stale follow falls back to own runner, never another ally
+OK legacy watcher validity requires an active player
+OK legacy empty-arch leave keeps own runner
+OK watch toggle is local and successful follow clears selection
+OK leave listener rejects runner pid, removes spectator only
+PASS 13 focused spectator scenarios, including 8 role/permission combinations.
+EXIT 0; elapsed 125ms
+
+TEST equipment-test
+Equipment: 47 bilingual entries; profile, container isolation, slots, ICE, swapping, run-state and help checks passed.
+EXIT 0; elapsed 153ms
+
+TEST equipment-runtime-test
+OK Hummingbird grants exactly one action
+OK Warrior free Armor costs no NET action and records per-run use
+OK Kestrel activates two separate Speedy copies
+OK Sequencer waits for next turn and chooses unused Armor
+OK Snaketrap blocks only the first random destruction
+OK Backup restore retains once-per-run usage
+OK Phoenix restores only on safe Jack Out
+OK Swifty allows exactly two Cloak rolls for one action once per run
+OK Training deck doubles direct brain damage
+OK Insulated Wiring and KRASH Barrier protections do not imply each other
+OK Shield stops one non-ICE brain hit, retaining 0 REZ until deactivation
+OK Cancelling both Swifty rolls refunds its reservation exactly once
+OK Hardened Circuitry never protects from Black ICE deck effects
+OK CyberConductor defeats source-deck programs without healing them
+OK Renamed ICE keeps its explicit equipment program identity
+OK Backup cannot overfill the deck or partially restore copies
+OK Phoenix cannot repair programs destroyed before this run
+OK Backup preserves spent Armor use when restored during a later run
+OK Zero-REZ Armor never reduces brain damage when a defeated mirror is missing
+OK Smithy updates explicit program identity as well as name and damage
+OK Function Driver protects only its selected program and does not consume Snaketrap
+OK Scout free Pathfinder expires after another action serial
+OK Cancelling Swifty rolls restores Scout serial only without intervening actions
+OK Smithy leaves destroyed tombstones unchanged
+OK Shared FBC Backup Drive IDs survive save and restoration
+25 authoritative equipment transition checks passed.
+EXIT 0; elapsed 114ms
+
+TEST program-icons-test
+Program icons: index-only, cached, permission-filtered and alias matched.
+EXIT 0; elapsed 104ms
+
+TEST security-test
+OK operation boundary rejects inherited names, unknown users and malformed payloads
+OK serialized competing mutations preserve both action spends
+OK secondary GM relays to primary and accepts only its expected result
+OK socket duplicate request executes once; different requests both execute
+OK architecture edit keeps live program attachments and slide records
+OK architecture edit cannot adopt a foreign actorId for later cleanup
+OK jack-out clears pending tests, targets, deployment targets and activations
+OK runner removal also prunes program floor overrides, reveal and targets
+OK spectator and runner in another architecture cannot apply entity damage
+OK cleanup deletes only explicitly managed ICE/demons, preserving legacy and personal actors
+OK cleanup never removes an occupied architecture folder
+OK new ICE, program ICE and demon documents all carry managed marker
+OK cancelled GM SPEED roll leaves test pending and posts no result
+OK SPEED result after jack-out is discarded
+OK in-flight duplicate reaction rolls once
+OK defence result requires known request and consumes it once, ignoring forged attack metadata
+OK defence after target disconnect is discarded and local prompts disappear
+OK duplicate defence delivery creates a single local prompt
+OK document cleanup rejects existing documents and unauthorized callers
+OK manual runner Actor deletion removes roster and only managed backing documents
+OK manual architecture ICE or Demon deletion prunes exact defs and reaction refs
+OK manual embedded Program deletion cleans only its mirror and managed backing actor
+OK manual backing Actor deletion derezzes its surviving Item and prevents phantom state
+OK core document deletion hooks run cleanup only on the primary GM
+24 security regression groups passed. This is mocked I/O, not a live Foundry session.
+EXIT 0; elapsed 121ms
+
+TEST content-test
+Content: validation, safe imports, native document creation, renamed samples, snapshot/duplicate/export/reimport without registry, GM permissions and explicit creation pass.
+EXIT 0; elapsed 115ms
+
+TEST help-ui-test
+OK en: continuous categories, live name/effect/key/alias search, clear/focus/query persistence, rules/tabs/Escape, 16px text, no overflow/blur/motion
+OK ru: continuous categories, live name/effect/key/alias search, clear/focus/query persistence, rules/tabs/Escape, 16px text, no overflow/blur/motion
+OK compact rules 1000px: 2 columns, summary/points/example/table/links, legacy fallback, full-text search, >=14.5px, no overflow
+OK compact rules 480px: 1 columns, summary/points/example/table/links, legacy fallback, full-text search, >=14.5px, no overflow
+Screenshots: C:\Users\trokh\AppData\Local\Packages\sandbox.{b96eb964-6d56-4844-845f-2b6861a277a3}\AC\Temp\crns-help-ui-XflrzM
+Chrome shutdown timeout; UI assertions passed
+EXIT 0; elapsed 5710ms
+
+TEST content-ui-test
+{
+  "renderer": "offline Chrome / actual ContentEditor + HBS + CSS",
+  "languages": [
+    "en",
+    "ru"
+  ],
+  "widths": [
+    480,
+    780
+  ],
+  "capture": true,
+  "importExport": true,
+  "repeatedCreate": {
+    "dialogs": 1,
+    "documents": 1
+  },
+  "output": "C:\\Users\\trokh\\AppData\\Local\\Packages\\sandbox.{b96eb964-6d56-4844-845f-2b6861a277a3}\\AC\\Temp\\crns-content-ui-u0C2Ft",
+  "errors": []
+}
+EXIT 0; elapsed 5934ms
+
+TEST 3d-test
+32 distinct book-inspired model meshes: finite, normalized, cached; opaque-floor spacing and fog boundaries pass.
+54 projected drag cases; owner colors, +Z facing and adjacent program clusters passed.
+✔ all PROGRAM_INFO attackers, canonical aliases and fallback finish and dispose (9.4019ms)
+✔ direction-independent endpoints, including reversed Z and coincident points (0.5971ms)
+✔ miss travels off-target and never creates a hit burst (2.1294ms)
+✔ four-active cap rejects without allocation; expiry permits next play (1.3167ms)
+✔ clear is idempotent, preserves world and inputs, and supports reuse (0.5494ms)
+✔ explicit clocks, default performance clock, beam anchoring and color override (0.6055ms)
+✔ orthographic particles use 3.5px screen size without attenuation (1.4328ms)
+✔ Nervescrub combines a shiny chrome sphere with sparks and cleans both (0.3532ms)
+✔ Sword sweeps a short slash around the impact, never around a miss (0.527ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21.9487
+{
+  "renderer": "WebGL / actual Three r172",
+  "models": 12,
+  "drawCalls": 26,
+  "contextsRetained": true,
+  "performance": {
+    "floors": 100,
+    "models": 300,
+    "buildMedianMs": 21.1,
+    "warmMedianMs": 70.1,
+    "p95Ms": 107.2,
+    "drawCalls": 8,
+    "visibleLabels": 3
+  },
+  "cleanupCycles": [
+    147.9,
+    128.7,
+    133.7,
+    133.4,
+    111.3
+  ],
+  "errors": []
+}
+{
+  "checks": 42,
+  "findings": [],
+  "cleanup": {
+    "observers": 0,
+    "tooltipDisposer": null,
+    "views": 0
+  },
+  "browser": "156.0.8078.48"
+}
+EXIT 0; elapsed 23585ms
+
+TEST performance-test
+CPU model benchmark; includes world-setting cloning; milliseconds per getData.
+{"floors":10,"ice":30,"runners":10,"median":0.45,"p95":0.79}
+{"floors":50,"ice":150,"runners":10,"median":0.79,"p95":1.32}
+{"floors":100,"ice":300,"runners":10,"median":1.13,"p95":1.44}
+EXIT 0; elapsed 436ms
+
+2D zoom raster correction (2026-10-24)
+Removed permanent will-change: transform from .crns-stage. This lets Chromium
+rasterize text/portraits at the current CSS transform scale instead of requesting
+a persistent cached layer. Pan/zoom formulas and stored camera are unchanged.
+Chrome integration: 60 checks, no findings, cleanup 0. At zoom 1.69, before/after
+parent-render image mean RGB difference was 0.0167 on a 0..255 scale (minor GPU
+rounding); saved camera matched exactly. verify: passed, existing 30 warnings.
+The persistent blur reported in the Foundry client was not reproduced reliably
+in Chrome 156; the live-client result still needs confirmation after reload.
+
+Cloak clear pointer-capture correction (2026-10-24)
+Reproduced: a real mouse click on the 2D Cloak marker sent no fx.clear request;
+the previous programmatic click test passed because it omitted pointerdown/up.
+The viewport now excludes [data-action] controls from left-button pan capture.
+Chrome integration: 63 checks, no findings, cleanup 0. Actual cross clicks in
+2D/3D send exactly one request with the correct architecture and Cloak id;
+empty-space dragging still moves the camera by the pointer delta.
+Rules: 49 groups passed, including GM-only removal of the requested Cloak,
+preservation of other markers/architectures and removal of the last marker.
+Changed JavaScript syntax checks passed. Foundry world documents were not used.
+
+
+FULL RECHECK 2026-10-24; actual module bodies / offline Chrome, not live Foundry
+
+TEST verify.mjs
+OK — all checks passed (30 warning(s)).
+WARN  [6] class crns-actions- used in templates but not styled in CSS
+WARN  [6] class crns-chip-btn{{#if used in templates but not styled in CSS
+WARN  [6] class crns-prog- used in templates but not styled in CSS
+WARN  [6] class crns-progclass-{{#if used in templates but not styled in CSS
+WARN  [6] class crns-program-used{{#if used in templates but not styled in CSS
+WARN  [6] class crns-mini{{#if used in templates but not styled in CSS
+WARN  [6] class crns-stage{{#if used in templates but not styled in CSS
+WARN  [6] class crns-floor-wrap{{#if used in templates but not styled in CSS
+WARN  [6] class crns-fog-wrap used in templates but not styled in CSS
+WARN  [6] class crns-floor{{#if used in templates but not styled in CSS
+WARN  [6] class crns-fm-lock{{#if used in templates but not styled in CSS
+WARN  [6] class crns-runner-chip{{#if used in templates but not styled in CSS
+WARN  [6] class crns-current-turn{{#if used in templates but not styled in CSS
+WARN  [6] class crns-prog-{{#if used in templates but not styled in CSS
+WARN  [6] class crns-editor-demons{{#if used in templates but not styled in CSS
+WARN  [6] class crns-editor-savebtn{{#if used in templates but not styled in CSS
+WARN  [6] class crns-chip{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-tab-panel used in templates but not styled in CSS
+WARN  [6] class crns-help-ice{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-prog{{#if used in templates but not styled in CSS
+WARN  [6] class crns-help-demon used in templates but not styled in CSS
+WARN  [6] class crns-help-rules used in templates but not styled in CSS
+WARN  [6] class crns-runner-row{{#if used in templates but not styled in CSS
+WARN  [6] class crns-runner-rank used in templates but not styled in CSS
+WARN  [6] class crns-runner-acts used in templates but not styled in CSS
+WARN  [6] class crns-runner-pos used in templates but not styled in CSS
+WARN  [6] class crns-tab{{#if used in templates but not styled in CSS
+WARN  [6] class crns-watch-toggle used in templates but not styled in CSS
+WARN  [6] class crns-watch-leave used in templates but not styled in CSS
+WARN  [6] class crns-watch-target{{#if used in templates but not styled in CSS
+
+EXIT 0; elapsed 3778ms
+
+TEST attack-effects-test.mjs
+✔ all PROGRAM_INFO attackers, canonical aliases and fallback finish and dispose (53.9699ms)
+✔ direction-independent endpoints, including reversed Z and coincident points (1.2789ms)
+✔ miss travels off-target and never creates a hit burst (3.2721ms)
+✔ four-active cap rejects without allocation; expiry permits next play (1.9029ms)
+✔ clear is idempotent, preserves world and inputs, and supports reuse (0.7734ms)
+✔ explicit clocks, default performance clock, beam anchoring and color override (0.8554ms)
+✔ orthographic particles use 3.5px screen size without attenuation (2.1882ms)
+✔ Nervescrub combines a shiny chrome sphere with sparks and cleans both (0.6323ms)
+✔ Sword sweeps a short slash around the impact, never around a miss (0.8681ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.2751
+
+EXIT 0; elapsed 284ms
+
+TEST branching-test.mjs
+OK legacy and single-floor topology use null entry and deepest root
+OK branch at depth 1, forward references, and unrestricted branch count
+OK reject malformed, disconnected, cyclic, duplicate, early and tied graphs
+OK fog preserves legacy max/reveal and exact branch history without sibling leaks
+OK Pathfinder walks path-distance and stops only a blocked subtree
+OK actual move operations enforce owner adjacency, no skips/sibling teleport
+OK password blocks child steps only, even with reversed display order
+OK legacy migration alone derives visited range
+OK connect uses actual entry and resets visited/revealed history
+OK actual Pathfinder keeps DV > total comparator and branch-ID reveal
+OK actual Virus uses unique deepest leaf, not last array element
+OK update preserves runner/program identities and prunes removed fog IDs
+OK linear-to-tree update migrates old fog by identity before reordering
+OK invalid save/import/duplicate cause no actor side effects
+OK copy/import remap parent IDs including forward references and actor snapshots
+OK import checks caps before creating actors and keeps one-floor legacy archives
+OK actual editor reorder freezes links and insert reconnects children
+OK actual editor branches, warns on tied save, reconnects delete and rejects early forks
+PASS 18 branching regressions (pure graph + actual operations/editor with Foundry mocks).
+
+EXIT 0; elapsed 428ms
+
+TEST canvas-test.mjs
+OK player branch fog never reveals sibling content
+OK frontier has one stub per branch, only adjacent stub is traversable
+OK fork offers each hidden child separately
+OK demon has its own floor section, target metadata retained
+OK spectator sees exactly the player's branch visibility
+OK GM sees full tree and unique deepest bottom
+OK reference highlight uses same branch fog
+OK watching a named ally uses only that runner's view
+OK editing gaps into history positions every known component
+OK legacy linear visited/reveal remain visible
+OK explicit reordered linear tree displays from entry to bottom
+OK rerender clears removed or hidden hover without changing program selection
+OK target callbacks validate current visible VM, including program minis
+OK empty architecture clears hover and rejects stale target callback
+OK current runner, deployed program and demon highlight their exact initiative actor
+OK used badges follow individual program round allowances and clear next round
+OK turn name and highlight never reveal the actor behind branch fog to player or spectator
+17 canvas/reference checks passed.
+
+EXIT 0; elapsed 813ms
+
+TEST content-test.mjs
+Content: validation, safe imports, native document creation, renamed samples, snapshot/duplicate/export/reimport without registry, GM permissions and explicit creation pass.
+
+EXIT 0; elapsed 1328ms
+
+TEST content-ui-test.mjs
+{
+  "renderer": "offline Chrome / actual ContentEditor + HBS + CSS",
+  "languages": [
+    "en",
+    "ru"
+  ],
+  "widths": [
+    480,
+    780
+  ],
+  "capture": true,
+  "importExport": true,
+  "repeatedCreate": {
+    "dialogs": 1,
+    "documents": 1
+  },
+  "output": "C:\\Users\\trokh\\AppData\\Local\\Packages\\sandbox.{585efcd0-7e9d-4c47-9d47-aa640a7e8472}\\AC\\Temp\\crns-content-ui-4RANft",
+  "errors": []
+}
+
+EXIT 0; elapsed 21540ms
+
+TEST equipment-runtime-test.mjs
+OK Hummingbird grants exactly one action
+OK Warrior free Armor costs no NET action and records per-run use
+OK Kestrel activates two separate Speedy copies
+OK Sequencer waits for next turn and chooses unused Armor
+OK Snaketrap blocks only the first random destruction
+OK Backup restore retains once-per-run usage
+OK Phoenix restores only on safe Jack Out
+OK Swifty allows exactly two Cloak rolls for one action once per run
+OK Training deck doubles direct brain damage
+OK Insulated Wiring and KRASH Barrier protections do not imply each other
+OK Shield stops one non-ICE brain hit, retaining 0 REZ until deactivation
+OK Cancelling both Swifty rolls refunds its reservation exactly once
+OK Hardened Circuitry never protects from Black ICE deck effects
+OK CyberConductor defeats source-deck programs without healing them
+OK Renamed ICE keeps its explicit equipment program identity
+OK Backup cannot overfill the deck or partially restore copies
+OK Phoenix cannot repair programs destroyed before this run
+OK Backup preserves spent Armor use when restored during a later run
+OK Zero-REZ Armor never reduces brain damage when a defeated mirror is missing
+OK Smithy updates explicit program identity as well as name and damage
+OK Function Driver protects only its selected program and does not consume Snaketrap
+OK Scout free Pathfinder expires after another action serial
+OK Cancelling Swifty rolls restores Scout serial only without intervening actions
+OK Smithy leaves destroyed tombstones unchanged
+OK Shared FBC Backup Drive IDs survive save and restoration
+25 authoritative equipment transition checks passed.
+
+EXIT 0; elapsed 234ms
+
+TEST equipment-test.mjs
+Equipment: 47 bilingual entries; profile, container isolation, slots, ICE, swapping, run-state and help checks passed.
+
+EXIT 0; elapsed 174ms
+
+TEST help-ui-test.mjs
+OK en: continuous categories, live name/effect/key/alias search, clear/focus/query persistence, rules/tabs/Escape, 16px text, no overflow/blur/motion
+OK ru: continuous categories, live name/effect/key/alias search, clear/focus/query persistence, rules/tabs/Escape, 16px text, no overflow/blur/motion
+OK compact rules 1000px: 2 columns, summary/points/example/table/links, legacy fallback, full-text search, >=14.5px, no overflow
+OK compact rules 480px: 1 columns, summary/points/example/table/links, legacy fallback, full-text search, >=14.5px, no overflow
+Screenshots: C:\Users\trokh\AppData\Local\Packages\sandbox.{585efcd0-7e9d-4c47-9d47-aa640a7e8472}\AC\Temp\crns-help-ui-hK9ou9
+
+EXIT 0; elapsed 7128ms
+
+TEST 3d-test.mjs
+32 distinct book-inspired model meshes: finite, normalized, cached; opaque-floor spacing and fog boundaries pass.
+54 projected drag cases; owner colors, +Z facing and adjacent program clusters passed.
+✔ all PROGRAM_INFO attackers, canonical aliases and fallback finish and dispose (10.4913ms)
+✔ direction-independent endpoints, including reversed Z and coincident points (0.9295ms)
+✔ miss travels off-target and never creates a hit burst (2.4645ms)
+✔ four-active cap rejects without allocation; expiry permits next play (1.462ms)
+✔ clear is idempotent, preserves world and inputs, and supports reuse (0.6343ms)
+✔ explicit clocks, default performance clock, beam anchoring and color override (0.6493ms)
+✔ orthographic particles use 3.5px screen size without attenuation (1.7627ms)
+✔ Nervescrub combines a shiny chrome sphere with sparks and cleans both (0.4612ms)
+✔ Sword sweeps a short slash around the impact, never around a miss (0.5605ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25.0983
+{
+  "renderer": "WebGL / actual Three r172",
+  "models": 12,
+  "drawCalls": 26,
+  "contextsRetained": true,
+  "performance": {
+    "floors": 100,
+    "models": 300,
+    "buildMedianMs": 18.1,
+    "warmMedianMs": 57.6,
+    "p95Ms": 249.6,
+    "drawCalls": 8,
+    "visibleLabels": 3
+  },
+  "cleanupCycles": [
+    155.8,
+    161.5,
+    150.1,
+    176.9,
+    129.8
+  ],
+  "errors": []
+}
+{
+  "checks": 78,
+  "findings": [],
+  "zoomRasterMeanDifference": 0.01969626888683318,
+  "cleanup": {
+    "observers": 0,
+    "tooltipDisposer": null,
+    "views": 0
+  },
+  "browser": "156.0.8078.48"
+}
+
+EXIT 0; elapsed 45859ms
+
+TEST models-test.mjs
+32 distinct book-inspired model meshes: finite, normalized, cached; opaque-floor spacing and fog boundaries pass.
+
+EXIT 0; elapsed 674ms
+
+TEST performance-test.mjs
+CPU model benchmark; includes world-setting cloning; milliseconds per getData.
+{"floors":10,"ice":30,"runners":10,"median":0.43,"p95":0.71}
+{"floors":50,"ice":150,"runners":10,"median":0.8,"p95":1.39}
+{"floors":100,"ice":300,"runners":10,"median":1.16,"p95":1.63}
+
+EXIT 0; elapsed 460ms
+
+TEST presentation-test.mjs
+54 projected drag cases; owner colors, +Z facing and adjacent program clusters passed.
+
+EXIT 0; elapsed 253ms
+
+TEST program-icons-test.mjs
+Program icons: index-only, cached, permission-filtered and alias matched.
+
+EXIT 0; elapsed 233ms
+
+TEST rules-test.mjs
+OK #2 0 REZ retains Rezzed/native item and backing actor, no derez/reset
+OK #2 destroy requires source effect; Dragon/Killer/Sabertooth and GM explicit work
+OK #2 backing ICE defeat retained, explicit deactivation deletes it; GM restore works
+OK equipment destruction prevention/source hooks preserve random and sourceRef
+OK #3 Defender once per copy per run, one name active, another copy allowed after deactivate
+OK #4 Attacker integrated attack consumes exactly one action; no damage required
+OK #4 cancelled native attack refunds reservation and once/run usage
+OK activation owner checks, target class, action checks and concurrency
+OK #5 program round use survives Jack In/Out, same-round reset and reconnect
+OK #5 two installed copies have independent round allowances
+OK #6 Slide attempt once/turn, password boundary and successful adjacent move
+OK #6 opposed Slide tie fails, greater total moves exactly one edge
+OK #7 Virus GM DV/action count, multiturm accumulation, equality fails, roll becomes removal DV
+OK fixed-DV boundary checks use strictly greater, Pathfinder sees equal-DV password
+OK #8 node once per turn from any floor and action spent only on success
+OK #9 Scanner is a tracked Meat Action, never a NET action or free second action
+OK #10 traps forbidden in started combat, allowed outside; #13 deploy has no SPEED test
+OK #11 equal initiative remains unchanged, queueTs used (never +1)
+OK #12 actual bridge: program DEF and BI ATK stat rolls exclude Interface, keep native dialog/Luck
+OK #1 anti-program ambush requires eligible Rezzed program, chooses program not runner
+OK SPEED tie avoids, loss selects pending program, cards never apply HP damage
+OK source metadata survives stash/apply and runner hook, equipment proxy forwards options
+OK 0-base-REZ Attacker is not defeated; actual defeated flag disables rolls
+OK disabled deck blocks action spending and ability results
+OK random destruction excludes broken copies and retains source completion
+OK native Interface Luck is consumed on the actor after a completed roll
+OK removed Backup Drive loses stored copies even if the item is reinstalled
+OK disconnect does not silently restore destroyed programs
+OK attacker visuals preserve exact source/target, hit/miss and architecture without changing HP
+OK deferred player defence carries its attack target into the visual reply
+OK custom snapshots drive native bridge identity, targets, cost, limits and exact cancelled refund
+OK custom target subset rejects non-ICE programs and runner before action spend
+OK custom Black ICE ambush honors target subset and native class despite renamed stock name
+OK Super Slide allows two resolved attempts, blocks pending/third and resets on next turn
+OK Scout action serial expires on action/move and survives reconnect
+OK Jack Out releases only this runner's Control Nodes and re-JackIn cannot reuse them
+OK GM removes a single mistaken effect while players cannot clear it
+OK program availability explains custom cost and per-run lock without spending actions
+OK closing or rerendering during action-bar resize removes window listeners
+OK last runner resets password defenses while an ally holds the run and persistent markers survive
+OK deleting a backing Black ICE can retire its surviving Item without an equipped deck
+OK v12 post-update turn hook refreshes the incoming runner, never the outgoing runner
+OK turn start restores the native action maximum plus equipment once and retains program round usage
+OK turn start recognizes world runners in unlinked tokens and rejects a different synthetic token
+OK program and unrelated turns do not refill the owner; stale turn requests do nothing
+OK combat start, stop and restart restore the first runner and clear the turn dedup marker
+OK only the primary GM handles a combat turn notification
+OK post-update turn handling retains Demon refresh and applies fire to the actual outgoing runner once
+OK GM removes only the requested architecture Cloak; player cannot remove one
+OK Scanner button uses its real descriptor, rolls once and consumes only the Meat Action even before Jack In
+OK Backdoor button spends one action and applies only a successful native check
+OK cancelling an Interface dialog leaves NET and Meat Action budgets untouched
+OK Slide dialog cancellation does not reserve an attempt; confirming spends once and preserves its target
+OK an accepted dialog cannot roll or apply a floor effect when the authoritative budget is empty
+OK Demon Interface and Zap dialogs spend only after confirmation and reject an empty counter
+OK Demon CN uses the Actor's current value and native d10 stat roll, never a fixed chat result
+OK folder/architecture lifecycle: create, rename, cycle rejection, edit, duplicate, tabs and recursive delete
+OK imported names remain text in folder and architecture deletion confirmations
+OK stale or non-folder create/import parents cannot produce invisible orphan entries
+OK Scout's immediate free Pathfinder is claimed after confirming either UI path
+60 rules regression groups passed.
+
+EXIT 0; elapsed 445ms
+
+TEST security-test.mjs
+OK operation boundary rejects inherited names, unknown users and malformed payloads
+OK serialized competing mutations preserve both action spends
+OK secondary GM relays to primary and accepts only its expected result
+OK socket duplicate request executes once; different requests both execute
+OK architecture edit keeps live program attachments and slide records
+OK architecture edit cannot adopt a foreign actorId for later cleanup
+OK jack-out clears pending tests, targets, deployment targets and activations
+OK runner removal also prunes program floor overrides, reveal and targets
+OK spectator and runner in another architecture cannot apply entity damage
+OK cleanup deletes only explicitly managed ICE/demons, preserving legacy and personal actors
+OK cleanup never removes an occupied architecture folder
+OK new ICE, program ICE and demon documents all carry managed marker
+OK cancelled GM SPEED roll leaves test pending and posts no result
+OK SPEED result after jack-out is discarded
+OK in-flight duplicate reaction rolls once
+OK defence result requires known request and consumes it once, ignoring forged attack metadata
+OK defence after target disconnect is discarded and local prompts disappear
+OK duplicate defence delivery creates a single local prompt
+OK document cleanup rejects existing documents and unauthorized callers
+OK manual runner Actor deletion removes roster and only managed backing documents
+OK manual architecture ICE or Demon deletion prunes exact defs and reaction refs
+OK manual embedded Program deletion cleans only its mirror and managed backing actor
+OK manual backing Actor deletion derezzes its surviving Item and prevents phantom state
+OK core document deletion hooks run cleanup only on the primary GM
+24 security regression groups passed. This is mocked I/O, not a live Foundry session.
+
+EXIT 0; elapsed 194ms
+
+TEST spectator-test.mjs
+OK Watch entry: new, roster, disconnected, connected; permission on/off
+OK target filtering and actor+architecture labels
+OK server permissions and no impersonation
+OK initial entry works for every own-runner state with freeMove false
+OK legacy user-id slot collision preserves own runner
+OK follow target must be an active player in the selected architecture
+OK freeMove gates cross-architecture switches only
+OK leave returns to untouched own runner with permission disabled
+OK stale follow falls back to own runner, never another ally
+OK legacy watcher validity requires an active player
+OK legacy empty-arch leave keeps own runner
+OK watch toggle is local and successful follow clears selection
+OK leave listener rejects runner pid, removes spectator only
+PASS 13 focused spectator scenarios, including 8 role/permission combinations.
+
+EXIT 0; elapsed 351ms
+
+TEST integration-ui-test.mjs
+{
+  "checks": 78,
+  "findings": [],
+  "zoomRasterMeanDifference": 0.01757631822386679,
+  "cleanup": {
+    "observers": 0,
+    "tooltipDisposer": null,
+    "views": 0
+  },
+  "browser": "156.0.8078.48"
+}
+
+EXIT 0; elapsed 16362ms
+
+TEST webgl-test.mjs
+{
+  "renderer": "WebGL / actual Three r172",
+  "models": 12,
+  "drawCalls": 26,
+  "contextsRetained": true,
+  "performance": {
+    "floors": 100,
+    "models": 300,
+    "buildMedianMs": 23.2,
+    "warmMedianMs": 63.4,
+    "p95Ms": 246.9,
+    "drawCalls": 8,
+    "visibleLabels": 3
+  },
+  "cleanupCycles": [
+    203.1,
+    137.7,
+    151.2,
+    158.2,
+    129.9
+  ],
+  "errors": []
+}
+
+EXIT 0; elapsed 22651ms
+
+FOLLOW-UP expanded integration-ui: 80 checks, findings [], cleanup observers=0/tooltipDisposer=null/views=0; Chrome 156.0.8078.48. Zoom raster mean RGB difference=0.020004625346901016. Screenshot full-audit-ui.png visually inspected.
+FOLLOW-UP isolated webgl: build median19.5ms, warm median40.4ms, p95 79.7ms; 100floors/300models; drawCalls8, visibleLabels3; errors[]. Software SwiftShader; not live Foundry FPS.

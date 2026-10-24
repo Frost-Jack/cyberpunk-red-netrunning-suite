@@ -1,0 +1,121 @@
+ПОЛНЫЙ ПРОГОН СТЕНДА И СВЕРКА ПРАВИЛ, 24.10.2026
+
+Результат
+Все 19 существующих тестовых entry points прошли до и после исправлений.
+3d-test включает повторные запуски пяти других проверок: это не 19 независимых
+подсистем и не процент покрытия кода. После расширения браузерного стенда
+отдельно прошли 80 UI-проверок; rules-test теперь содержит 60 групп вместо 49.
+Новых failures нет. verify сохраняет прежние 30 предупреждений CSS/HBS.
+Подтверждённые дефекты исправлены; полной автоматизации всех правил нет.
+
+Среда и методика
+Установлены Foundry 12.343, cyberpunk-red-core v0.92.4, модуль 1.1.
+Node запускает настоящие тела функций модуля с заглушками Foundry I/O.
+Chrome 156.0.8078.48 запускает реальные шаблоны, CSS, listeners и Three r172;
+WebGL использует SwiftShader. Общий UI-стенд теперь включает дерево, вкладки,
+редактор архитектуры, roster, панель действий, карту и переключение 2D/3D.
+Help и Content Editor имеют отдельные браузерные стенды RU/EN и 480/780/1000px.
+В общем стенде они остаются заглушками; общей Suite проверена ширина 1180px.
+В браузерном стенде записи документов/мутации имитируются; отдельные Node-тесты
+проверяют реальные операции состояния. Передача между живыми клиентами,
+серверная БД и нативные окна/Active Effects Foundry здесь не запускались.
+Живые Actor, Item, Combat и настройки мира не изменялись. Менялся только модуль.
+Версия не менялась, коммитов, push и релиза не было; прежние правки сохранены.
+
+Исправлено в этом прогоне
+P2. Отмена Interface/Scanner/Slide тратила действие или оставляла pending Slide.
+  Воспроизведение: открыть Backdoor, отменить native dialog; 20 действий -> 19.
+  Исправление: beforeRoll в CPR bridge; списание/claim после подтверждения,
+  перед roll. Отмена не занимает Meat Action и не расходует попытку Slide.
+  Slide сохраняет исходную цель. Пустой authoritative бюджет блокирует бросок.
+  Проверка: actual listener -> actual bridge -> actual data operations, rules.
+P2. Отмена Interface/Zap демона также расходовала его NET Action.
+  Исправлено тем же порядком. Отказ операции списания больше не игнорируется.
+P1 (правила). Combat Number демона публиковался фиксированным числом без d10;
+  табличные 14 перекрывали изменённое GM значение Actor (18 отображалось как 14).
+  Исправлено: native actor.createStatRoll("combatNumber"), CN + 1d10, текущее
+  значение Actor, стандартный dialog/chat. NET Zap/defense используют Interface.
+  Проверены отмена, однократная трата, пустой счётчик и Actor override.
+P2. Scout терял непосредственный бесплатный Pathfinder при отмене dialog.
+  Исправлено: claim после подтверждения и из action bar, и из equipment panel.
+  Kernel продолжает проверять наличие оборудования, Jack In и action serial.
+P1 (HTML). Имя импортированной архитектуры/папки входило в HTML подтверждения
+  удаления без экранирования. Проверка показала буквальный <img onerror=...>.
+  Теперь текст экранируется; отмена подтверждения сохраняет записи.
+P2. Удалённый/не-folder parent при create/import создавал невидимую orphan-запись.
+  Проверка parent выполняется до записей и создания backing Actor.
+P2 (UI). Подпись текущего хода перекрывала Cloak strip. Полоса сдвигается ниже
+  подписи; геометрия отдельно проверена в 2D и 3D.
+
+Покрытие функционала
+Область | Стенд | Результат и граница
+Дерево/папки/архитектуры | rules, branching, integration-ui | CRUD, rename, move/cycle, recursive delete, parent race, табы, отправка редактором черновика, cancel. Экспорт/импорт и snapshot remap отдельно в branching/content. Браузерное сохранение не выдаётся за запись в серверную БД.
+Ветви/перемещение/Password | branching:18 | Связность, единственное дно, parentId, no teleport, возврат через Password, сохранение identity при reorder, legacy migration.
+Подключение/выход/roster | rules, security, spectator, integration-ui | Jack In cost, roster selection, очистка pending/targets/attachments/program Actors, сохранение чужих документов. Unsafe последствия требуют GM.
+Начало хода/экономика | rules:60 | Incoming runner/demon, unlinked Token, bonus, dedup, NET/Meat, отмена dialog, отсутствие повторного refill от redraw.
+Interface | rules + native bridge | Scanner, Backdoor, Cloak, Control, Eye-Dee, Pathfinder, Virus, Slide, Zap; strict DV/ties и native LUCK. Не все эффекты автоматически изменяют архитектуру.
+Программы | rules, runtime, content | Item-copy round/run limits, activation+attack, cancellation refund, Deactivate, defeated != destroyed, own BI Actor, explicit custom definitions.
+Black ICE | rules, security, models/WebGL | SPEED ambush, anti-program eligibility/random target, trap/deploy, chase, Slide, queue, исчезновение целей и cleanup.
+Демоны | rules, integration-ui | Отдельные Interface/CN, NET counters и reset, native CN roll, панели Zap/CN. Тактики GM AI и физического выстрела по сцене нет.
+Урон/эффекты | rules, runtime, security | Source/target context, HP/REZ, Armor/Shield, destroyed sources, equipment prevention. Damage/спецэффекты применяются явно; FX сами HP не меняют.
+Оборудование | equipment + runtime:25 | 47 двуязычных записей, used-deck/container isolation, slot pools, bonuses, swaps, Backup/Phoenix, Scout/Swifty, protection/reset. Физические условия подтверждает GM.
+Кастомный контент | content + content-ui | Схема, безопасный импорт, snapshot после удаления записи, native Item/Actor creation boundary, save/create separation, repeated click, cancel, RU/EN.
+Роли/видимость | security:24, spectator:13, canvas:17, integration-ui | GM/player/spectator, hidden branch actors, no GM controls for players, own actions, no actions/Cloak for spectator. UI fog не является защитой данных от console.
+2D/3D | integration-ui:80, 3d/WebGL/models/presentation/FX | Camera, zoom, actual Cloak cross click, empty pan, overlays, turn/used badges, select/target/sheet, mounted real panels, 20 rerenders, disposal. Observer/view cleanup = 0.
+Справочник/локализация | help-ui, equipment, icons, verify | RU/EN keys/search/categories/rules, compact layout, native icon cache, no overflow в проверенных размерах отдельных редакторов/справочника.
+Сокеты/состояние | security + rules | Primary-GM routing, serialization, duplicate delivery, stale defense/response cleanup. Отправитель raw module socket не аутентифицируется, см. ограничения.
+
+Сверка правил
+Основные страницы локального Corebook: 197-212, особенно 198-201 (действия,
+Interface), 201-204 (бой/копии программ), 205-208 (ICE/урон/оборудование),
+209-212 (архитектуры/Control/Demons). Читался релевантный текст, не вся книга.
+Повторно проверены официальный FAQ v1.3, Corebook Errata v1.25 и errata
+Netrunning Deck 2025 (Flak/Hellhound). Дополнения оборудования сверены с уже
+инвентаризированными 47 записями и релевантными локальными источниками.
+Это не постраничная повторная проверка всех книг каталога.
+
+Механика | Источник | Поведение | Статус/решение
+NET-атака/защита | Corebook201,205 | Interface+ATK; ICE ATK; Program DEF; runner Interface; d10 native | Проверено. Равенство выигрывает защита.
+NET/Meat и Scanner | Corebook197-199 | Одно Meat ИЛИ NET allowance, Scanner = Meat | Проверено и через кнопку. Первоначальное подозрение о двойной стоимости Scanner НЕ подтвердилось; исправлена именно отмена dialog.
+Copies/round/run | Corebook201-204; Errata3 | Каждая Item copy отдельно, Defender/Superglue раз/run | Проверено. Отметка «Использована» отражает round limit, не обновляется на каждом чужом ходу.
+0 REZ/Destroyed | Corebook201-202,204,206-207 | Defeated сохраняет copy/Actor до Deactivate, destroyed требует источника | Проверено; обычный 0 REZ не удаляет программу навсегда.
+Slide/SPEED | Corebook200,205; FAQ8 | Opposed ties, adjacent escape, no Password skip, eligible anti-program targets | Проверено. Изменение цели во время Slide dialog не меняет сохранённый target.
+Virus/Control | Corebook199-200,210,212 | Unique bottom, GM DV+actions, multi-turn work, removalDV, node once/Turn | Проверено. Содержание Virus/физическое устройство разрешает GM.
+Demons/CN | Corebook205,212 | NET = Interface+d10; physical devices = CN+d10 | Исправлены fixed CN и игнорирование Actor override. Roll устройства не применяет выстрел/урон на сцене автоматически.
+Armor/Shield/brain damage | Corebook203-204,206-208; Errata3 | HP без wearable SP/critical injury, Armor -4, Shield применим только к non-ICE | Проверено в kernel. Native CPR program damage card не включает criticalCard; bonus injury модуль не добавляет.
+Flak/Hellhound | Netrunning Deck Errata2025 | Flak: ATK non-Black-ICE Attacker против владельца =0; Hellhound fire не складывается | Эффект Flak должен учитывать GM через native modifiers: автоматического изменения ATK по защите цели нет. Это ограничение автоматизации, не полный pass.
+Инициатива нового ICE | Corebook205 + явное исключение пользователя | Same highest number, latest first | Намеренное house rule. RAW +1 не подменяет договорённость.
+Training + Range Upgrade | Midnight/Interface RED3; решение пользователя | rangeRequiresGM | GM решает в каждом случае; 8м не объявлены универсальным RAW приоритетом.
+
+Оставшиеся ограничения/непроверенное
+P1: raw module socket metadata userId/gmId не удостоверяет реального клиента.
+P1: world settings читаются клиентами; fog скрывает UI, не secrets от console.
+Эти архитектурные ограничения не исправлены и не покрыты заявлением «безопасно».
+GM вручную разрешает unsafe Jack Out, REZ/позиции defenses при reset с Virus,
+часть drains/условных эффектов Kraken/Wisp/Skunk, Flak modifier, Cloak discovery,
+Rock Lobster expanded actions, физические стены/access/range/Breacher/FBC/Lotos.
+Cloak markers есть, автоматического расследования следов по Pathfinder/Cloak DV нет.
+Zap имеет 1d6 через штатную droplet-кнопку CPR chat card; автоматического нового
+damage prompt после сравнения Suite не добавлено. Применение урона остаётся явным.
+Неполные названия целей Sword в RU: установленная система, lang/ru.json:920,
+CPR.itemSheet.program.damageTo не содержит {programType}. Код системы не менялся.
+Размытие 2D из живого клиента не воспроизведено надёжно; guard will-change,
+zoom-vs-fresh-render и camera persistence проходят, но это не live подтверждение.
+Нужен ручной прогон в отдельном резервном Foundry мире с GM и player clients:
+native AE, CPR dialogs/chat, Dice So Nice, реальные Combat и серверные broadcasts.
+
+Производительность
+CPU getData, cloning включён: 10 floors median0.43/p95 0.71мс;
+50 floors 0.80/1.39мс; 100 floors, 300ICE 1.16/1.63мс.
+Отдельный WebGL software run: 100 floors/300 models, build median19.5мс,
+warm median40.4мс, p95 79.7мс, 8 draw calls, 3 видимых label. Это не FPS
+в Foundry и не сравнение аппаратного GPU. Параллельный batch давал p95 246.9мс;
+он сохранён в raw logs и не выдаётся за сопоставимый performance baseline.
+
+Источники/артефакты
+RULES-REVIEW.txt и EQUIPMENT-REVIEW.txt: подробная таблица/инвентаризация.
+TEST-RESULTS.txt: raw финальный batch. MANUAL-TESTS.txt: живые сценарии.
+https://rtalsoriangames.com/wp-content/uploads/2021/07/RTG-CPR-CoreBookFAQv1.3.pdf
+https://rtalsoriangames.com/wp-content/uploads/2021/08/RTG-CPR-CoreBookErratav1.25.pdf
+https://rtalsoriangames.com/wp-content/uploads/2025/03/Netrunning-Deck-First-Printing-Errata.pdf
+https://rtalsoriangames.com/errata/

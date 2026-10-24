@@ -1,4 +1,4 @@
-{{!-- Architecture editor (floor chain). GM draft editing. --}}
+{{!-- Architecture editor (floor tree). GM draft editing. --}}
 {{#if editor}}
 <div class="crns-editor-body" data-arch-id="{{editor.archId}}">
 
@@ -15,6 +15,11 @@
       <button type="button" class="crns-btn" data-action="editor-cancel"><i class="fas fa-xmark"></i> {{localize "CRNS.Editor.Cancel"}}</button>
     </div>
   </div>
+
+  <p class="crns-editor-branch-hint">{{localize "CRNS.Editor.BranchRules"}}</p>
+  {{#if editor.topologyError}}
+  <p class="crns-editor-topology-error" role="alert">{{localize editor.topologyError}}</p>
+  {{/if}}
 
   <div class="crns-floor-chain">
     {{#each editor.floors as |floor|}}
@@ -36,9 +41,19 @@
           <button type="button" class="crns-icon-btn" data-action="floor-up" title="{{localize "CRNS.Editor.MoveUp"}}"{{#if floor.isFirst}} disabled{{/if}}><i class="fas fa-arrow-up"></i></button>
           <button type="button" class="crns-icon-btn" data-action="floor-down" title="{{localize "CRNS.Editor.MoveDown"}}"{{#if floor.isLast}} disabled{{/if}}><i class="fas fa-arrow-down"></i></button>
           <button type="button" class="crns-icon-btn" data-action="floor-insert" title="{{localize "CRNS.Editor.InsertAfter"}}"><i class="fas fa-plus"></i></button>
+          <button type="button" class="crns-icon-btn" data-action="floor-branch" title="{{localize "CRNS.Editor.AddBranch"}}"{{#unless floor.canBranch}} disabled{{/unless}}><i class="fas fa-code-branch"></i></button>
           <button type="button" class="crns-icon-btn" data-action="floor-delete" title="{{localize "CRNS.Editor.DeleteFloor"}}"{{#unless floor.canDelete}} disabled{{/unless}}><i class="fas fa-trash"></i></button>
         </span>
       </div>
+
+      <label class="crns-floor-parent">{{localize "CRNS.Editor.Parent"}}
+        <select data-action="floor-parent"{{#if floor.isEntry}} disabled{{/if}}>
+          {{#if floor.isEntry}}<option value="">{{localize "CRNS.Editor.Entry"}}</option>{{/if}}
+          {{#each floor.parentOptions as |parent|}}
+          <option value="{{parent.id}}"{{#if parent.selected}} selected{{/if}}>{{localize "CRNS.Editor.Floors"}} {{parent.number}}</option>
+          {{/each}}
+        </select>
+      </label>
 
       <textarea class="crns-floor-desc" data-action="floor-desc" rows="2" placeholder="{{localize "CRNS.Editor.DescPlaceholder"}}">{{floor.description}}</textarea>
 

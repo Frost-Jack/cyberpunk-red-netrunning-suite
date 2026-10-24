@@ -4,7 +4,7 @@
  * visibility. Application v1 (Foundry v12), resizable + pop-out. */
 
 import { MODULE_ID, TPL, loc, esc } from "../constants.js";
-import { getWorld, mutate } from "../data.js";
+import { getWorld, mutate, isSpectatableRunner } from "../data.js";
 import { userNetrunnerActor } from "../cpr-bridge.js";
 
 import * as Tree from "./tree.js";
@@ -14,8 +14,11 @@ import * as Canvas from "./arch-canvas.js";
 import * as Runners from "./runners.js";
 import * as Actions from "./actions.js";
 import * as Help from "./help.js";
+import * as Equipment from "./equipment-panel.js";
+import * as Content from "./content-editor.js";
+import { wireTooltips, disposeTooltips } from "./tooltips.js";
 
-const SUBMODULES = [Tree, Tabs, Editor, Canvas, Runners, Actions, Help];
+const SUBMODULES = [Tree, Tabs, Editor, Canvas, Runners, Actions, Help, Equipment, Content];
 
 /** Small modal prompting for a single line of text. Resolves to the trimmed
  *  string, or null if cancelled/empty. Shared helper for rename/create dialogs. */
@@ -36,6 +39,7 @@ export function promptText(title, initial = "") {
         cancel: { icon: '<i class="fas fa-times"></i>', label: loc("CRNS.Tree.Cancel"), callback: () => resolve(null) },
       },
       default: "ok",
+      close: () => resolve(null),
       render: (html) => {
         const input = html[0].querySelector("input[name=value]");
         input?.focus();
@@ -59,6 +63,8 @@ export default class NetrunningSuiteApp extends Application {
       collapsedRight: true,
       cam: {},
       draft: {},
+      view3d: !!game.user.getFlag(MODULE_ID, "view3d"),
+      watchOpen: false,
     };
     // Currently hovered entity ref (set by the canvas), used by the T handler.
     this.hovered = "";
@@ -89,11 +95,19 @@ export default class NetrunningSuiteApp extends Application {
     });
   }
 
-  /** Which participant record represents me: my runner, else my spectator, else null. */
+  /** An explicit, valid watch takes precedence without replacing my runner. */
   myParticipant() {
     const session = getWorld("session") || {};
     const parts = session.participants || {};
     const uid = game.user.id;
+    const archs = getWorld("netArchs") || {};
+    for (const [pid, p] of Object.entries(parts)) {
+      if (p.kind !== "spectator" || p.userId !== uid || !archs[p.archId]) continue;
+      const available = p.followPid
+        ? parts[p.followPid]?.archId === p.archId && isSpectatableRunner(parts[p.followPid], archs)
+        : Object.values(parts).some((r) => r.archId === p.archId && isSpectatableRunner(r, archs));
+      if (available) return { pid, ...p };
+    }
     // A runner I own (by userId, or by owning the actor).
     for (const [pid, p] of Object.entries(parts)) {
       if (p.kind !== "runner") continue;
@@ -106,10 +120,6 @@ export default class NetrunningSuiteApp extends Application {
         }
         if (actor?.testUserPermission?.(game.user, "OWNER") && p.userId === uid) return { pid, ...p };
       }
-    }
-    // My spectator record.
-    for (const [pid, p] of Object.entries(parts)) {
-      if (p.kind === "spectator" && p.userId === uid) return { pid, ...p };
     }
     return null;
   }
@@ -170,6 +180,7 @@ export default class NetrunningSuiteApp extends Application {
       try { mod.activateListeners(this, html); }
       catch (e) { console.error(`${MODULE_ID} | activateListeners`, e); }
     }
+    wireTooltips(this, html);
   }
 
   _onKeyDown(ev) {
@@ -199,6 +210,10 @@ export default class NetrunningSuiteApp extends Application {
   }
 
   async close(options) {
+    this._helpKeyCleanup?.();
+    this._helpKeyCleanup = null;
+    disposeTooltips(this);
+    Actions.cleanup?.(this);
     // Tear down the matrix-rain rAF loop + ResizeObserver (owned by the canvas).
     try { Canvas.stopRain?.(this); } catch (e) { /* noop */ }
     if (this._rainRaf) { cancelAnimationFrame(this._rainRaf); this._rainRaf = null; }

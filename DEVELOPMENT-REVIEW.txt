@@ -1,0 +1,132 @@
+АУДИТ И РЕАЛИЗАЦИЯ NETRUNNING SUITE, 24.10.2026
+
+Среда: Foundry12.343 (package.json12.343.0), CPR v0.92.4,
+модуль1.1. Изменён только каталог cyberpunk-red-netrunning-suite.
+До работы git status показал22 изменённых tracked файла и множество
+untracked исходников/стендов. Они сохранены; reset/checkout/commit/push,
+тегов/релиза/смены версии/установки зависимостей не было.
+Готового graphify-out/graph.json в workspace/модуле нет; чтение исходников
+через rg, без установки graphify и генерации незапрошенного графа.
+
+Состояние и архитектура
+main регистрирует stores/hooks, data сериализует domain operations,
+socket доставляет их primary GM, cpr-bridge интегрирует native CPR,
+apps готовят view models и events, topology определяет видимость ветвей,
+3D получает уже разрешённую view model. Новый custom-content содержит
+валидируемые определения, content-editor редактирует библиотеку GM.
+Система и книги были источниками для чтения; логика визуального сайта
+не переносилась. Оформление существующего модуля сохранено.
+
+Baseline (до изменений)
+Все10 указанных entry points прошли. Дополнительно performance-test прошёл.
+verify имел28 предупреждений CSS (в основном динамические HBS class tokens).
+rules30, branching18, canvas11, spectator13, equipment42, runtime14.
+3D:32 модели,54 pan projections,9 FX unit checks,Chrome WebGL/integration
+без ошибок; cleanup observers0/views0. Точные baseline/final метрики
+и методика в PERFORMANCE.txt. Это НЕ baseline живой Foundry-сессии.
+
+Исправленные подтверждённые проблемы
+Приоритет | Как воспроизвести | Причина/файл | Исправление
+P1 | Два активных GM одновременно тратят действия | mutate исполнял op локально на каждом GM; data.js/socket.js | Все идут через primary, op queue, request dedup.
+P1 | Подменить actorId в архитектуре, затем удалить сущность | cleanup доверял произвольным ID; data.js/cpr-bridge.js | Reuse лишь прежних ID; только managedEntity ICE/Demon удаляются, занятые/legacy папки сохраняются.
+P1 | Дважды ответить на defence или сменить target пока открыт roll | main.js/actions.js не связывали ответ с запросом | defenseId и сохранённый context, однократное consume, validation после await.
+P2 | Сохранить архитектуру с преследующим player BI | data.js проверял iceId, не progKey | attachments/slid корректно сохраняются.
+P2 | Выйти с контролируемым узлом и подключиться вновь | floorState.control не освобождался | Только владение уходящего runner очищается; чужие узлы остаются.
+P2 | Последний runner выходит, затем начинается новый run | breached оставался навсегда | Временные breached/control сбрасываются, Virus/Cloak сохраняются; REZ/позиции отдельно решает GM из-за влияния Virus.
+P2 | Backup восстанавливает в заполненную деку или Phoenix чинит старую потерю | equipment-runtime.js | Atomic capacity preflight; копия сохраняет used state/source deck; Phoenix только destroyed данногоrun.
+P2 | Smithy меняет именованный Item с explicit programKey | Старый key сохранялся | Меняется key вместе с native stats; destroyed tombstone не конвертируется.
+P2 | Назвать custom Armor/Killer/Imp как штатную сущность | Name lookup давал чужую механику | Stable ID/flags; native class authoritative; custom отдельно от name matching.
+P2 | Отложить Scout до конца хода | freePathfinder жил до next turn | Serial контекст истекает после substantive action/move, поддержана чистая отмена reservation.
+P2 | Сохранить definition или дважды нажать Create | Риск скрытого создания/дубля в редакторе | Save отдельно; Create с confirmation и блокировкой save-confirm-create; один запрос/документ.
+P2 | Закрыть окно во время drag нижней панели | window pointer listeners жили до pointerup | cleanup на закрытии/перерисовке/pointercancel; regression.
+P2 | Удалить hovered entity/переключить reduced motion во время FX | 3D stale callbacks/resource lifetime | Callback проверяет доступность; FX отменяется; общий кеш живёт до последнего consumer.
+P2 | Autoderez уменьшает кольцо9->8 мини-программ | Координатный signature ошибочно считал цель новой | Сравниваются identity/floor; сохранённые endpoints продолжают FX, fog всё ещё отменяет его.
+P3 | Каждый FX кадр с тем же viewport | Three setSize пересоздавал canvas buffer | Размер меняется лишь при фактическом resize; проверкаbufferResizes.
+
+Новый редактор контента
+Кнопка file-pen в панели GM. Program создаётся native Item program,
+Black ICE/Demon native Actor blackIce/demon; не выдуманы Item types.
+Создание с нуля/из world sample, load/save/copy/import/export; stable definition
+ID и snapshot в document.flags. На Save не создаются документы и не меняются
+существующие экземпляры/персонажи. Явная Create создаёт один world document,
+не устанавливает Item в персонажа. Дальнейшее редактирование библиотечного
+определения не обновляет уже созданные документы; bulk update не добавлен.
+Кастомный ICE/Demon доступен в native architecture picker; inline snapshot
+переживает export/reimport и удаление записи библиотеки. Native source
+class/имя/статы используются при создании образца из переименованного документа.
+
+Поддерживаются поля name/image/description/stats/class, подмножество целей
+native class, dice damage без JavaScript/actor references, цена/слоты,
+activation cost1..10, usage round/run. Лимиты по отдельной Item copy;
+отмена возвращает точную стоимость. Восемь FX профилей/auto/none,
+32 штатных моделей плюс explicit unknown fallback, цвет либо owner color.
+Actor/Token изображения сохранены. GM явно применяет whitelist runner
+эффектов; destroy на0REZ учитывает stable source. Manual descriptions
+ничего сами не исполняют. Статы/условия, которые не поддержаны declarative
+schema, сохраняются текстом и разрешаются GM; произвольного JS/eval нет.
+Импорт ограничен размером/схемой, отбрасывает _id/ownership/macros/AE.
+
+UX
+Причина недоступности показана на кнопке: disconnected, deck disabled,
+нет действий/цели, used copy, wrong floor context. Стоимость custom программы
+видна. Player не запускает известное недоступное действие ради уведомления;
+GM сохраняет Shift override. Огнём и disabled status можно управлять
+по отдельности; HP/REZ остаются явными GM операциями. Окно редактора resizable,
+scroll сохраняется, во время записи поля блокируются. Справочник остаётся
+списком с поиском. Hover-scale/blur/постоянные новые анимации не добавлены.
+
+Правила и оборудование
+RULES-REVIEW.txt начинается актуальной30-строчной таблицей5 колонок:
+механика/источник+печатная страница/поведение/расхождение/решение.
+История прежних этапов отделена явным заголовком.
+EQUIPMENT-REVIEW.txt содержит инвентаризацию47 записей, source/pages,
+системные поля, полноту автоматизации, slots/stack/reset и GM boundaries.
+Добавлены FBC coating, Function Driver, Netsuit Insulation, Super Slide,
+Crunch Whistle. Super Slide разрешает2 attempts/Turn с активным upgrade.
+Бонусы не угадываются по похожему имени; native AE не дублируются.
+House rule инициативы сохранён: число равно первому, очередь выше;
+новейший ICE первый, никогда+1. Training+Range: пользователь выбрал
+«GM в каждом случае», поэтому rangeRequiresGM и явная подпись сохранены.
+
+Оставшиеся ограничения
+P1: raw module socket не удостоверяет фактического отправителя. userId/gmId
+metadata и dedup не являются аутентификацией против злонамеренного клиента.
+P1: world settings читаются клиентом. Fog и FX защищают UI, не тайны от console.
+Нужен отдельный архитектурный дизайн хранения/авторитетного транспорта для
+защиты от adversarial player; текущие тесты не выдают это за решённую задачу.
+Нативные функции пока требуют ручного GM разрешения ряда drain/status,
+Kraken/Wisp/Skunk, unsafe Jack Out effects, reset REZ/позиций с учетом Virus,
+Rock Lobster expanded actions, физических distance/walls/access/Breacher/FBC
+условий и Lotos external hardware. Не все книги проверены постранично.
+Legacy документы без managed marker сохраняются, могут требовать ручной
+чистки после проверки происхождения. Автомиграция права удаления не назначает.
+
+Удаление документов после native Delete тоже обрабатывается: primary GM
+проверяет фактическое отсутствие документа, очищает exact architecture refs,
+roster/mirrors/attachments/pending tests и только managed backing Actor.
+Surviving Black ICE Item штатно выключается даже без экипированной деки.
+2D hover/target callback проверяет актуальную разрешённую VM; действительный
+выбор программы при обычном rerender сохраняется. Эти случаи покрыты
+security24, canvas14 и rules41.
+
+Итоговая проверка
+Node: verify, rules41, branching18, canvas14, spectator13, security24,
+equipment47, runtime25, program-icons, content validation/native
+create/archive/export/reimport. Chrome: help-ui RU/EN, content-ui RU/EN480/780,
+3d-test(models/pan/FX/WebGL/integration42). performance отдельно.
+14 entry points; verify сохраняет28 исходных warning, failures0.
+git diff --check и синтаксис пройдены.
+Живая Foundry-сессия, многоклиентская сеть и пользовательская GPU не проверены.
+Actors/Items/Combat/settings реального мира ради тестов не менялись.
+MANUAL-TESTS.txt содержит отдельные разделы GM/игрок/наблюдатель с ожидаемыми
+результатами. Это оставшиеся ручные сценарии, а не заявление об их выполнении.
+
+Транзакционной гарантии между Actor/Item updates и несколькими world settings
+нет: отключение primary GM или ошибка записи посреди операции может требовать
+проверки состояния GM. Очередь и dedup уменьшают обычные гонки, не заменяют
+серверную транзакцию/rollback. Raw финального прогона: TEST-RESULTS.txt.
+
+Финальная производительность: CPU getData100/300 median1.13мс vs1.09мс,
+WebGL full median70.1мс vs64.2мс. Порогов не превышено, idle frames0,
+cleanup0, drawcalls8; ускорение не заявляется. Разброс и промежуточные
+значения не скрыты, см.PERFORMANCE.txt.

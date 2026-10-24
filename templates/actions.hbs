@@ -117,7 +117,7 @@
       {{#each actions.abilities as |ab|}}
       <button type="button" class="crns-chip-btn{{#if ab.free}} free{{/if}}{{#if ab.dim}} dim{{/if}}" data-action="ability-roll"
               data-pid="{{../actions.pid}}" data-actor-id="{{../actions.actorId}}"
-              data-ability="{{ab.key}}" data-free="{{ab.free}}">{{ab.label}}</button>
+              data-ability="{{ab.key}}" data-free="{{ab.free}}" data-blocked="{{#if ab.reason}}true{{else}}false{{/if}}" {{#if ab.disabled}}disabled{{/if}} {{#if ab.reason}}title="{{localize ab.reason}}"{{/if}}>{{ab.label}}</button>
       {{/each}}
       {{#if actions.hasControl}}
       <button type="button" class="crns-chip-btn crns-ctrl-node" data-action="control-node"
@@ -134,8 +134,8 @@
           right-aligned action buttons. Scrolls to fill the remaining center height. --}}
     <div class="crns-prog-list">
       {{#each actions.programs as |pg|}}
-      <div class="crns-prog-row crns-prog-{{pg.cls}} crns-progclass-{{pg.classBucket}}{{#if pg.rezzed}} rezzed{{/if}}{{#if pg.derezzed}} derezzed{{/if}}{{#if pg.isTrap}} trap{{/if}}{{#if pg.isDeployed}} deployed{{/if}}{{#if pg.destroyed}} destroyed{{/if}}"
-           title="{{pg.tip}}">
+      <div class="crns-prog-row crns-prog-{{pg.cls}} crns-progclass-{{pg.classBucket}}{{#if pg.rezUsed}} crns-program-used{{/if}}{{#if pg.rezzed}} rezzed{{/if}}{{#if pg.derezzed}} derezzed{{/if}}{{#if pg.isTrap}} trap{{/if}}{{#if pg.isDeployed}} deployed{{/if}}{{#if pg.destroyed}} destroyed{{/if}}"
+           data-net-tooltip="{{pg.tip}}">
         <span class="crns-prog-code" aria-hidden="true">{{pg.code}}</span>
         <span class="crns-prog-ident">
           <span class="crns-prog-name">{{pg.name}}</span>
@@ -152,8 +152,10 @@
           {{/if}}
         </span>
         <span class="crns-prog-states">
+          {{#if pg.rezUsed}}<span class="crns-used-badge" title="{{localize "CRNS.View.usedHint"}}"><i class="fas fa-check"></i> {{localize "CRNS.View.used"}}</span>{{/if}}
           {{#if pg.destroyed}}<span class="crns-prog-state crns-state-destroyed">{{localize "CRNS.Actions.StateDestroyed"}}</span>{{else}}
           {{#if pg.rezzed}}<span class="crns-prog-state crns-state-rezzed">{{localize "CRNS.Actions.StateRezzed"}}</span>{{/if}}
+          {{#if pg.derezzed}}<span class="crns-prog-state">{{localize "CRNS.Rules.Derezzed"}}</span>{{/if}}
           {{#if pg.isTrap}}<span class="crns-prog-state crns-state-trap"><i class="fas fa-land-mine-on"></i> {{localize "CRNS.Actions.StateTrap"}}</span>{{/if}}
           {{#if pg.isDeployed}}<span class="crns-prog-state crns-state-deployed">{{localize "CRNS.Actions.StateDeployed"}}</span>{{/if}}
           {{#if pg.autoDerezHint}}<span class="crns-prog-state crns-state-auto" title="{{localize "CRNS.Actions.AutoDerezHint"}}"><i class="fas fa-arrow-rotate-left"></i></span>{{/if}}
@@ -182,10 +184,15 @@
             {{/if}}
             {{/if}}
           {{else}}
-          <button type="button" class="crns-mini{{#if pg.rezUsed}} dim{{/if}}" data-action="program-activate"
+          <button type="button" class="crns-mini{{#if pg.activateBlocked}} dim{{/if}}" data-action="program-activate" {{#if pg.activateDisabled}}disabled{{/if}}
                   data-pid="{{../actions.pid}}" data-actor-id="{{../actions.actorId}}"
                   data-program-id="{{pg.id}}" data-cls="{{pg.cls}}"
-                  title="{{#if pg.rezUsed}}{{localize "CRNS.Errors.AlreadyRezzed"}}{{else}}{{localize "CRNS.Actions.Activate"}}{{/if}}"><i class="fas fa-toggle-off"></i></button>
+                  title="{{#if pg.activateReason}}{{localize pg.activateReason}}{{else}}{{localize "CRNS.Actions.Activate"}}{{/if}}">{{#if pg.isAttacker}}{{localize "CRNS.Actions.ATK"}}{{else}}<i class="fas fa-toggle-off"></i>{{/if}} · {{pg.actionCost}}</button>
+          {{/if}}
+          {{#if pg.canDamage}}
+          <button type="button" class="crns-mini" data-action="program-roll" data-exec="damage"
+                  data-pid="{{../actions.pid}}" data-actor-id="{{../actions.actorId}}"
+                  data-program-id="{{pg.id}}" data-is-attacker="true">{{localize "CRNS.Actions.DMG"}}</button>
           {{/if}}
         </span>
       </div>
@@ -271,7 +278,7 @@
       </button>
       <button type="button" class="crns-btn" data-action="demon-action" data-actor-id="{{actions.actorId}}"
               {{#if actions.demonNoActions}} disabled title="{{localize "CRNS.Errors.NoActions"}}"{{/if}}>{{localize "CRNS.Actions.DemonAction"}}</button>
-      <button type="button" class="crns-btn" data-action="demon-cn" data-actor-id="{{actions.actorId}}" data-cn="{{actions.combatNumber}}"
+      <button type="button" class="crns-btn" data-action="demon-cn" data-actor-id="{{actions.actorId}}"
               {{#if actions.demonNoActions}} disabled title="{{localize "CRNS.Errors.NoActions"}}"{{/if}}>{{localize "CRNS.Actions.CombatNumber"}} {{actions.combatNumber}}</button>
       <button type="button" class="crns-btn" data-action="demon-reset" data-actor-id="{{actions.actorId}}">
         <i class="fas fa-rotate"></i> {{localize "CRNS.Actions.DemonReset"}}

@@ -2,11 +2,14 @@
  * Settings registration, Handlebars helpers, template preload, hooks. */
 
 import { MODULE_ID, TPL, THEMES, loc, esc, BLACK_ICE, blackIceTypeForName } from "./constants.js";
-import { WORLD_OBJECTS, getWorld, setWorld, isPrimaryGM, mutate, hasOp, notifyClients } from "./data.js";
+import { WORLD_OBJECTS, getWorld, setWorld, isPrimaryGM, mutate, hasOp, notifyClients, activeProgramRefs, combatantMatchesActor } from "./data.js";
 import { initSocket } from "./socket.js";
 import * as bridge from "./cpr-bridge.js";
 import { eligibleNetrunner } from "./cpr-bridge.js";
 import NetrunningSuiteApp from "./apps/suite-app.js";
+import { loadProgramIcons } from "./program-icons.js";
+import { ensureSuiteStyles } from "./styles.js";
+import { play3DAttack } from "./apps/architecture-3d.js";
 
 /* ------------------------------------------------------------------ */
 /* init: settings + helpers                                            */
@@ -52,15 +55,27 @@ Hooks.once("init", () => {
 /* ------------------------------------------------------------------ */
 
 Hooks.once("ready", async () => {
+  await ensureSuiteStyles();
   initSocket();
   globalThis.CRNS = { ui: new NetrunningSuiteApp() };
 
   await loadTemplates([
-    "shell", "tree", "tabs", "arch-canvas", "editor", "runners", "actions", "actions-damagebox", "actions-target", "entity-card", "help",
+    "shell", "tree", "tabs", "arch-canvas", "editor", "runners", "actions", "actions-damagebox", "actions-target", "entity-card", "help", "content-editor",
   ].map(TPL));
 
   patchSortCombatants();
   await normalizeLegacyPids();
+  loadProgramIcons().then(() => { if (globalThis.CRNS?.ui?.rendered) globalThis.CRNS.ui.render(false); });
+  for (const actor of game.actors) observeRecorder(actor);
+});
+function observeRecorder(actor) {
+  bridge.observeDeathSave(actor, data => {
+    if (data.failed) notifyClients({ kind: "recorderDeath", ...data, eventId: foundry.utils.randomID(16) });
+  });
+}
+Hooks.on("createActor", actor => observeRecorder(actor));
+Hooks.on(`${MODULE_ID}.notify`, data => {
+  if (data?.kind === "recorderDeath" && isPrimaryGM()) mutate("equipment.recordDeath", data);
 });
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +175,7 @@ function rerenderNow() { _rerenderDebounced(); }
 
 Hooks.on("updateSetting", (setting) => {
   if (!setting.key?.startsWith(`${MODULE_ID}.`)) return;
+  pruneDefenseRequests();
   _rerenderDebounced();
 });
 
@@ -175,6 +191,7 @@ function actorRelevant(actor) {
     if (p.kind === "runner" && p.actorUuid === uuid) return true;
   }
   if (actor.type === "blackIce" || actor.type === "demon") {
+    if (Object.values(session.progState || {}).some(p => p.actorId === actor.id)) return true;
     if (archReferencesActor(actor.id)) return true;
   }
   return actor.testUserPermission?.(game.user, "OWNER") && eligibleNetrunner(actor);
@@ -198,6 +215,9 @@ const _actorHook = (actor) => {
   if (actorRelevant(actor)) _rerenderDebounced();
 };
 Hooks.on("updateActor", _actorHook);
+Hooks.on("deleteActor", actor => {
+  if (isPrimaryGM() && !actor.pack && !actor.isToken) mutate("session.documentDeleted", { actorId: actor.id });
+});
 
 const _itemHook = (item) => {
   const app = globalThis.CRNS?.ui;
@@ -208,38 +228,99 @@ const _itemHook = (item) => {
 Hooks.on("createItem", _itemHook);
 Hooks.on("updateItem", _itemHook);
 Hooks.on("deleteItem", _itemHook);
+Hooks.on("deleteItem", item => {
+  if (isPrimaryGM() && item.type === "program" && item.parent?.documentName === "Actor" && !item.parent.pack) {
+    mutate("session.documentDeleted", { actorUuid: item.parent.uuid, programId: item.id });
+  }
+});
+Hooks.on("preUpdateItem", (item, changes) => {
+  if (item.type !== "cyberdeck" || item.parent?.documentName !== "Actor") return;
+  const next = changes["system.installedItems.list"] ?? changes.system?.installedItems?.list;
+  if (!Array.isArray(next)) return;
+  const removed = (item.system?.installedItems?.list || []).filter(id => !next.includes(id));
+  if (removed.length) mutate("equipment.backupRemoved", { actorUuid: item.parent.uuid, driveIds: removed });
+});
+Hooks.on("preDeleteItem", item => {
+  if (item.parent?.documentName === "Actor") mutate("equipment.backupRemoved", { actorUuid: item.parent.uuid, driveIds: [item.id] });
+});
 
 /* ------------------------------------------------------------------ */
 /* Combat integration — reset a runner's NET actions on their turn      */
 /* ------------------------------------------------------------------ */
 
 function resetRunnerForCombatant(combat) {
-  if (!isPrimaryGM()) return;
-  const actor = combat?.combatant?.actor;
-  if (!actor) return;
+  if (!isPrimaryGM() || combat?.id !== game.combat?.id) return;
+  mutate("run.startTurn", { combatId: combat.id, round: combat.round, combatantId: combat.combatant?.id });
+}
+Hooks.on("combatTurnChange", (combat, previous, current) => {
+  rerenderNow();
+  if (!isPrimaryGM() || combat.id !== game.combat?.id) return;
+  if (previous?.round === current?.round && previous?.combatantId === current?.combatantId) return;
+  const prior = combat.combatants?.get(previous?.combatantId);
   const session = getWorld("session") || {};
-  const parts = session.participants || {};
-  // Runner whose turn it is → reset its NET actions.
-  if (hasOp("run.reset")) {
-    for (const [pid, p] of Object.entries(parts)) {
-      if (p.kind === "runner" && p.actorUuid === actor.uuid) {
-        mutate("run.reset", { pid });
-      }
+  for (const [pid, part] of Object.entries(session.participants || {})) {
+    const actor = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+    if (part.kind === "runner" && combatantMatchesActor(prior, part.actorUuid, actor?.id)) {
+      mutate("equipment.turnEnd", { pid, key: `${combat.id}:${previous.round}:${previous.combatantId}` });
     }
   }
-  // Demon whose turn it is → reset its NET-action counter (SPEC §14.8/§14.10).
-  if (actor.type === "demon" && hasOp("demon.reset")) {
-    mutate("demon.reset", { actorId: actor.id });
-  }
-}
-Hooks.on("combatTurn", (combat) => resetRunnerForCombatant(combat));
-Hooks.on("combatRound", (combat) => resetRunnerForCombatant(combat));
+  resetRunnerForCombatant(combat);
+});
+Hooks.on("updateCombat", combat => { rerenderNow(); if (!combat.started) resetRunnerForCombatant(combat); });
+Hooks.on("deleteCombat", rerenderNow);
+for (const hook of ["createCombatant", "updateCombatant", "deleteCombatant"]) Hooks.on(hook, rerenderNow);
 
 /* ------------------------------------------------------------------ */
 /* Auto-roll: primary GM answers a player's attack (SPEC §8.4)          */
 /* ------------------------------------------------------------------ */
 
+const resolvingReactions = new Set();
+const pendingDefenseRequests = new Map();
+
+function defenseContextValid(data, session = getWorld("session") || {}) {
+  const part = session.participants?.[data.pid];
+  if (!part?.archId || part.jackedIn === false || (data.archId && data.archId !== part.archId)) return false;
+  const owner = part.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  if (!owner) return false;
+  if (data.progDefense?.programId && !owner.getOwnedItem?.(data.progDefense.programId)?.system?.isRezzed) return false;
+  if (data.attackerProg?.pid) {
+    const source = session.participants?.[data.attackerProg.pid];
+    const actor = source?.actorUuid ? fromUuidSync(source.actorUuid) : null;
+    if (!source || source.jackedIn === false || source.archId !== part.archId || !actor?.getOwnedItem?.(data.attackerProg.programId)) return false;
+  }
+  return true;
+}
+
+function pruneDefenseRequests() {
+  const session = getWorld("session") || {};
+  for (const [id, request] of pendingDefenseRequests) if (!defenseContextValid(request, session)) pendingDefenseRequests.delete(id);
+  const app = globalThis.CRNS?.ui;
+  if (app?._pendingDefense) app._pendingDefense = app._pendingDefense.filter(request => defenseContextValid(request, session));
+}
+
+function requestDefense(data) {
+  const part = (getWorld("session") || {}).participants?.[data.pid];
+  const request = { ...data, archId: part?.archId || "", defenseId: foundry.utils.randomID(16) };
+  if (!defenseContextValid(request)) return;
+  pruneDefenseRequests();
+  if (data.attackerProg?.activationId && [...pendingDefenseRequests.values()].some(existing => existing.pid === request.pid
+    && existing.targetRef === request.targetRef && existing.attackerProg?.activationId === data.attackerProg.activationId)) return;
+  if (pendingDefenseRequests.size >= 256) pendingDefenseRequests.delete(pendingDefenseRequests.keys().next().value);
+  pendingDefenseRequests.set(request.defenseId, foundry.utils.deepClone(request));
+  notifyClients(request);
+}
+async function resolveReaction(key, callback) {
+  if (resolvingReactions.has(key)) return;
+  resolvingReactions.add(key);
+  try { await callback(); }
+  finally { resolvingReactions.delete(key); }
+}
+
 Hooks.on(`${MODULE_ID}.notify`, (data) => {
+  if (data?.kind === "attackVisual") {
+    if (globalThis.CRNS?.ui) play3DAttack(globalThis.CRNS.ui, data);
+    return;
+  }
   // Player-side defence prompt (SPEC Addendum 2): the OWNING player client shows
   // a defence prompt in the action bar; evaluated on every client (not GM-gated).
   if (data?.kind === "defenseRequest") {
@@ -250,9 +331,9 @@ Hooks.on(`${MODULE_ID}.notify`, (data) => {
   if (data?.kind === "rollRequest") {
     handleRollRequest(data).catch((e) => console.error(`${MODULE_ID} | rollRequest`, e));
   } else if (data?.kind === "speedTest") {
-    handleSpeedTest(data).catch((e) => console.error(`${MODULE_ID} | speedTest`, e));
+    resolveReaction(`speed:${data.testId}`, () => handleSpeedTest(data)).catch((e) => console.error(`${MODULE_ID} | speedTest`, e));
   } else if (data?.kind === "slideTest") {
-    handleSlideTest(data).catch((e) => console.error(`${MODULE_ID} | slideTest`, e));
+    resolveReaction(`slide:${data.pid}`, () => handleSlideTest(data)).catch((e) => console.error(`${MODULE_ID} | slideTest`, e));
   } else if (data?.kind === "defenseResult") {
     handleDefenseResult(data).catch((e) => console.error(`${MODULE_ID} | defenseResult`, e));
   }
@@ -264,10 +345,12 @@ function handleDefenseRequest(data) {
   const app = globalThis.CRNS?.ui;
   if (!app) return;
   const part = (getWorld("session") || {}).participants?.[data.pid];
-  if (!part || part.userId !== game.user.id) return; // only the owner prompts.
+  if (!part || part.userId !== game.user.id || !data.defenseId || !defenseContextValid(data)) return;
   app._pendingDefense = app._pendingDefense || [];
+  if (app._pendingDefense.some(request => request.id === data.defenseId)) return;
   app._pendingDefense.push({
-    id: foundry.utils.randomID(8),
+    id: data.defenseId,
+    archId: data.archId,
     pid: data.pid,
     attackerName: data.attackerName || "",
     attackerTotal: Number(data.total) || 0,
@@ -278,6 +361,7 @@ function handleDefenseRequest(data) {
     progName: data.progName || "",
     // Carry the attacker program so the defence reply can trigger miss auto-derez.
     attackerProg: data.attackerProg || null,
+    targetRef: data.targetRef || "",
   });
   if (app.rendered) app.render(false);
 }
@@ -288,11 +372,18 @@ function handleDefenseRequest(data) {
  *  runner; `data.runnerTotal` the runner's slide total. On success the ICE's
  *  attachment to this runner is dropped and a slid record stored. */
 async function handleSlideTest(data) {
+  const part = (getWorld("session") || {}).participants?.[data.pid];
+  const attempt = part?.slideAttempt;
+  if (part?.jackedIn === false || attempt?.targetRef !== data.testRef || !Number.isFinite(Number(data.runnerTotal))) return;
   const resolved = refToActor(data.testRef);
   if (!resolved?.actor || resolved.kind !== "ice") return;
   const iceActor = resolved.actor;
 
   const roll = await bridge.rollEntityStat(iceActor, "per");
+  if (!roll || !isPrimaryGM()) return;
+  const current = (getWorld("session") || {}).participants?.[data.pid];
+  if (current?.jackedIn === false || current?.archId !== part.archId
+    || current?.slideAttempt?.targetRef !== attempt.targetRef || current?.slideAttempt?.destination !== attempt.destination) return;
   const iceTotal = Number(roll?.resultTotal) || 0;
   const runnerTotal = Number(data.runnerTotal) || 0;
 
@@ -327,6 +418,8 @@ async function handleSlideTest(data) {
       const [, archId, , iceId] = testRef.split(":");
       await mutate("run.slideResolve", { archId, iceId, pid: data.pid });
     }
+  } else {
+    await mutate("run.clearSlideAttempt", { pid: data.pid, targetRef: data.testRef });
   }
 }
 
@@ -337,11 +430,21 @@ async function handleSlideTest(data) {
 async function handleSpeedTest(data) {
   const session = getWorld("session") || {};
   const test = (session.pendingTests || []).find((t) => t.id === data.testId);
-  if (!test) return;
+  const part = session.participants?.[test?.pid];
+  if (!test || (data.pid && data.pid !== test.pid) || !part?.archId || part.jackedIn === false || !Number.isFinite(Number(data.runnerTotal))) return;
   const iceActor = game.actors?.get(test.iceActorId);
   if (!iceActor) { await mutate("run.clearSpeedTest", { testId: data.testId }); return; }
+  if (test.antiProgram) {
+    const candidates = activeProgramRefs(session, test.pid, iceActor);
+    if (!candidates.length) { await mutate("run.clearSpeedTest", { testId: test.id }); return; }
+    if (!candidates.includes(test.targetRef)) test.targetRef = candidates[Math.floor(Math.random() * candidates.length)];
+  }
 
   const roll = await bridge.rollEntityStat(iceActor, "spd");
+  if (!roll || !isPrimaryGM()) return;
+  const current = getWorld("session") || {};
+  if (!(current.pendingTests || []).some((t) => t.id === test.id && t.iceActorId === test.iceActorId)
+    || current.participants?.[test.pid]?.jackedIn === false || current.participants?.[test.pid]?.archId !== part.archId) return;
   const iceTotal = Number(roll?.resultTotal) || 0;
   const runnerTotal = Number(data.runnerTotal) || 0;
   const runnerName = participantName(session, test.pid);
@@ -357,6 +460,10 @@ async function handleSpeedTest(data) {
   });
 
   if (!avoided) {
+    if (test.targetRef) {
+      const current = (getWorld("session") || {}).targets?.[game.user.id];
+      if (current !== test.targetRef) await mutate("session.setTarget", { entityRef: test.targetRef });
+    }
     // The ICE's effect applies — post its effect text.
     const resolved = refToActor(test.ref);
     const effectKey = resolved?.type ? BLACK_ICE[resolved.type]?.effectKey : "";
@@ -455,9 +562,10 @@ async function handleRollRequest(data) {
 
     // Player-owned → prompt the owning player to roll the program's defence.
     if (runnerIsPlayerControlled(pid)) {
-      notifyClients({
+      requestDefense({
         kind: "defenseRequest",
         pid,
+        targetRef: data.targetRef,
         attackerName: data.attackerName || "",
         total: Number(data.total) || 0,
         // Program-defence marker: the owner rolls bridge.rollProgram(..,"def").
@@ -474,9 +582,11 @@ async function handleRollRequest(data) {
       return;
     }
     const roll = await bridge.rollProgram(owner, programId, "def");
+    if (!roll || !isPrimaryGM() || !defenseContextValid({ pid, archId: part.archId, progDefense: { programId }, attackerProg: data.attackerProg })) return;
     const defenderTotal = Number(roll?.resultTotal) || 0;
     const progName = owner.getOwnedItem?.(programId)?.name || owner.name;
     postComparisonCard(data.attackerName, Number(data.total) || 0, progName, defenderTotal);
+    postProgramAttackVisual(data, (Number(data.total) || 0) > defenderTotal);
     if ((Number(data.total) || 0) <= defenderTotal) await derezAttackerProg(data.attackerProg);
     return;
   }
@@ -490,9 +600,10 @@ async function handleRollRequest(data) {
   if (kind === "runner") {
     const pid = (data.targetRef || "").slice("runner:".length);
     if (runnerIsPlayerControlled(pid)) {
-      notifyClients({
+      requestDefense({
         kind: "defenseRequest",
         pid,
+        targetRef: data.targetRef,
         attackerName: data.attackerName || "",
         total: Number(data.total) || 0,
         // Carry the attacker program through so the player's defence reply can
@@ -511,19 +622,25 @@ async function handleRollRequest(data) {
   let defenderTotal = 0;
   if (kind === "ice") {
     const roll = await bridge.rollEntityStat(actor, "def");
+    if (!roll) return;
     defenderTotal = Number(roll?.resultTotal) || 0;
   } else if (kind === "demon") {
     // SPEC §14.8: demons now ROLL 1d10+Interface on defense (Combat Number stays
     // only as a separate manual action button on the demon panel).
     const roll = await bridge.rollEntityStat(actor, "interface");
+    if (!roll) return;
     defenderTotal = Number(roll?.resultTotal) || 0;
   } else if (kind === "runner") {
     // GM-controlled runner (userId "") — auto-roll GM-side.
     const roll = await bridge.rollInterface(actor, "defense");
+    if (!roll) return;
     defenderTotal = Number(roll?.resultTotal) || 0;
   }
 
+  if (!isPrimaryGM() || refToActor(data.targetRef)?.actor?.id !== actor.id) return;
+  if (kind === "runner" && !defenseContextValid({ pid: data.targetRef.slice(7), attackerProg: data.attackerProg })) return;
   postComparisonCard(data.attackerName, Number(data.total) || 0, actor.name, defenderTotal);
+  postProgramAttackVisual(data, (Number(data.total) || 0) > defenderTotal);
 
   // Requirement 3: on a MISS (atk <= def) an attacker program auto-derezzes,
   // WITHOUT a damage roll. (On a hit the player rolls damage and the attacker
@@ -540,6 +657,9 @@ async function handleRollRequest(data) {
  *  no-op (no error, no double card). */
 async function derezAttackerProg(attackerProg) {
   if (!attackerProg?.isAttacker) return;
+  // Integrated activations finish immediately on the owner's client, independent
+  // of whether damage is rolled or a deferred defence prompt is answered.
+  if (attackerProg.activationId) return;
   const { pid, programId } = attackerProg;
   if (!pid || !programId) return;
   const part = (getWorld("session") || {}).participants?.[pid];
@@ -560,15 +680,44 @@ async function derezAttackerProg(attackerProg) {
 /** Primary GM: a player rolled their defence (SPEC Addendum 2) — post the
  *  attacker-vs-defence comparison card (ties to defender, default rule). */
 async function handleDefenseResult(data) {
-  const part = (getWorld("session") || {}).participants?.[data.pid];
+  const request = pendingDefenseRequests.get(data.defenseId);
+  if (!request || request.pid !== data.pid || !Number.isFinite(Number(data.defenseTotal))) return;
+  pendingDefenseRequests.delete(data.defenseId);
+  if (!defenseContextValid(request)) return;
+  const part = (getWorld("session") || {}).participants?.[request.pid];
   const actor = part?.actorUuid ? (fromUuidSync?.(part.actorUuid) ?? null) : null;
   // Program defence (item 2): name the defending program; else the runner.
-  const name = data.defenderName || actor?.name || loc("CRNS.Runners.NPC");
-  const atk = Number(data.attackerTotal) || 0;
+  const name = request.progName || actor?.name || loc("CRNS.Runners.NPC");
+  const atk = Number(request.total) || 0;
   const def = Number(data.defenseTotal) || 0;
-  postComparisonCard(data.attackerName || "", atk, name, def);
+  postComparisonCard(request.attackerName || "", atk, name, def);
+  postProgramAttackVisual(request, atk > def);
   // Requirement 3: attacker program auto-derezzes on a MISS (atk <= def).
-  if (atk <= def) await derezAttackerProg(data.attackerProg);
+  if (atk <= def) await derezAttackerProg(request.attackerProg);
+}
+
+/** Visual-only result: renderer resolves both endpoints from its permitted VM. */
+function postProgramAttackVisual(data, hit) {
+  const source = data.attackerProg;
+  if (!source?.isAttacker || !data.targetRef) return;
+  const session = getWorld("session") || {};
+  const part = session.participants?.[source.pid];
+  const owner = part?.actorUuid ? fromUuidSync(part.actorUuid) : null;
+  const program = owner?.getOwnedItem?.(source.programId);
+  if (!part?.jackedIn || !part.archId || !["antipersonnelattacker", "antiprogramattacker"].includes(program?.system?.class)) return;
+  const ref = data.targetRef;
+  const targetPid = ref.startsWith("runner:") ? ref.slice(7) : ref.startsWith("prog:") ? parseProgRef(ref)?.pid : "";
+  if (targetPid && !session.participants?.[targetPid]?.jackedIn) return;
+  const targetArch = targetPid ? session.participants?.[targetPid]?.archId : /^(ice|demon):/.test(ref) ? ref.split(":")[1] : "";
+  const parsedTarget = ref.startsWith("prog:") ? parseProgRef(ref) : null;
+  const targetUuid = parsedTarget && session.participants?.[parsedTarget.pid]?.actorUuid;
+  const targetOwner = targetUuid ? fromUuidSync(targetUuid) : null;
+  const exists = parsedTarget ? targetOwner?.getOwnedItem?.(parsedTarget.programId) : refToActor(ref)?.actor;
+  if (targetArch !== part.archId || !exists) return;
+  const id = source.activationId ? `${part.archId}:${source.pid}:${source.activationId}` : foundry.utils.randomID(12);
+  notifyClients({ kind: "attackVisual", id, archId: part.archId,
+    sourceRef: `prog:${source.pid}:${source.programId}`, ownerRef: `runner:${source.pid}`,
+    targetRef: ref, programName: program.name, visual: bridge.programDefinition?.(program)?.visual, hit: hit === true });
 }
 
 /** Post the module comparison mini-card. Default (attack): the attacker must

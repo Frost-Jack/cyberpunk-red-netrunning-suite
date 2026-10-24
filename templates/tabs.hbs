@@ -10,12 +10,34 @@
     </div>
     {{/each}}
   {{else}}
-    {{#if tabsSpectator}}
-      {{#each tabsSpectator.tabs as |tab|}}
-      <div class="crns-tab crns-tab-spectate{{#if tab.active}} active{{/if}}" data-arch-id="{{tab.archId}}" data-action="spectate-switch">
-        <span class="crns-tab-name">{{tab.name}}</span>
-      </div>
-      {{/each}}
+    {{#if tabsWatch}}
+    <button type="button" class="crns-btn crns-watch-toggle" data-action="watch-toggle" aria-expanded="{{tabsWatch.open}}" aria-controls="crns-watch-menu">
+      <i class="fas fa-eye"></i> {{localize "CRNS.Tabs.Watch"}}
+    </button>
+    {{#if tabsWatch.canLeave}}
+    <button type="button" class="crns-btn crns-watch-leave" data-action="spectate-leave" data-pid="{{tabsWatch.spectatorPid}}">
+      <i class="fas fa-arrow-left"></i> {{#if tabsWatch.hasOwnRunner}}{{localize "CRNS.Tabs.ReturnToRunner"}}{{else}}{{localize "CRNS.Tabs.StopWatching"}}{{/if}}
+    </button>
+    {{/if}}
     {{/if}}
   {{/if}}
 </div>
+{{#if equipmentAvailable}}
+<button type="button" class="crns-icon-btn" data-action="equipment-open" title="{{localize "CRNS.Equipment.Title"}}"><i class="fas fa-microchip"></i></button>
+{{/if}}
+{{#if tabsWatch.open}}
+<div class="crns-watch-menu" id="crns-watch-menu" role="region" aria-label="{{localize "CRNS.Tabs.Watch"}}">
+  {{#if tabsWatch.permissionDenied}}
+  <p class="crns-watch-hint">{{localize "CRNS.Errors.SpectatorsDisabled"}}</p>
+  {{else}}
+  {{#if tabsWatch.switchLocked}}<p class="crns-watch-hint">{{localize "CRNS.Errors.SpectatorSwitchLocked"}}</p>{{/if}}
+  {{/if}}
+  {{#each tabsWatch.targets as |target|}}
+  <button type="button" class="crns-btn crns-watch-target{{#if target.active}} active{{/if}}" data-action="spectate-switch" data-arch-id="{{target.archId}}" data-follow-pid="{{target.pid}}"{{#if target.disabled}} disabled{{/if}}>
+    <span class="crns-watch-name">{{target.name}}</span> <span class="crns-watch-arch">{{target.archName}}</span>
+  </button>
+  {{else}}
+  <p class="crns-watch-hint">{{localize "CRNS.Tabs.NoWatchTargets"}}</p>
+  {{/each}}
+</div>
+{{/if}}

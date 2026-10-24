@@ -1,10 +1,9 @@
 /* Open-architecture tab strip. Phase B.
  * GM: strip of open archs from session.tabs (activate, edit-toggle, close).
- * Players (runners): no tabs (locked to their arch).
- * Spectators: a plain switcher of runner-occupied archs when spectatorFreeMove. */
+ * Players: an always-visible watch picker, independent of their runner roster. */
 
-import { MODULE_ID } from "../constants.js";
-import { getWorld, mutate, hasOp, playerRunnerArchIds } from "../data.js";
+import { MODULE_ID, loc } from "../constants.js";
+import { getWorld, mutate, hasOp, isSpectatableRunner } from "../data.js";
 
 export function getData(app) {
   const session = getWorld("session") || {};
@@ -23,27 +22,36 @@ export function getData(app) {
     return { tabsGM: { tabs } };
   }
 
-  // Spectator switcher. Shown to any non-GM user WITHOUT a runner participant
-  // when spectating is allowed — including users with no participant record yet
-  // (the record is only created by their first session.spectate, so gating on
-  // an existing spectator record made joining impossible). With free-move off,
-  // the switcher is only offered while they have no arch yet (initial join —
-  // mirrors the op's server-side gate); afterwards they are locked in.
   let allowSpectators = false, freeMove = false;
   try { allowSpectators = !!game.settings.get(MODULE_ID, "allowSpectators"); } catch (e) { /* noop */ }
   try { freeMove = !!game.settings.get(MODULE_ID, "spectatorFreeMove"); } catch (e) { /* noop */ }
   const me = app.myParticipant();
-  const spectatorCapable = allowSpectators && me?.kind !== "runner";
-  const mayPick = freeMove || !(me?.archId);
-  if (spectatorCapable && mayPick && hasOp("session.spectate")) {
-    // Only archs holding a PLAYER-owned runner are spectatable (SPEC §13) —
-    // spectators watch players, not GM/NPC-run architectures.
-    const list = playerRunnerArchIds(session)
-      .filter((id) => archs[id])
-      .map((id) => ({ archId: id, name: archs[id].name, active: (me?.archId || "") === id }));
-    if (list.length) return { tabsSpectator: { tabs: list } };
-  }
-  return {};
+  const parts = session.participants || {};
+  const spectator = Object.entries(parts).find(([, p]) => p.kind === "spectator" && p.userId === game.user.id);
+  const hasOwnRunner = Object.values(parts).some((p) => p.kind === "runner" && p.userId === game.user.id);
+  const currentArch = me?.kind === "spectator" ? me.archId : "";
+  const targets = Object.entries(parts)
+    .filter(([, p]) => isSpectatableRunner(p, archs))
+    .map(([pid, p]) => {
+      const actor = p.actorUuid ? (fromUuidSync?.(p.actorUuid) ?? null) : null;
+      const switchLocked = !freeMove && !!currentArch && currentArch !== p.archId;
+      return {
+        pid, archId: p.archId,
+        name: actor?.name || game.users.get(p.userId)?.name || loc("CRNS.Runners.NPC"),
+        archName: archs[p.archId].name,
+        active: me?.kind === "spectator" && me.followPid === pid,
+        disabled: !allowSpectators || switchLocked,
+      };
+    });
+  return { tabsWatch: {
+    open: !!app.state.watchOpen,
+    targets,
+    permissionDenied: !allowSpectators,
+    switchLocked: !freeMove && !!currentArch,
+    canLeave: !!spectator,
+    spectatorPid: spectator?.[0] || "",
+    hasOwnRunner,
+  } };
 }
 
 export function activateListeners(app, html) {
@@ -82,9 +90,32 @@ export function activateListeners(app, html) {
     return;
   }
 
-  // Spectator switcher.
-  html.find('[data-action="spectate-switch"]').on("click", (ev) => {
+  html.find('[data-action="watch-toggle"]').on("click", () => {
+    app.state.watchOpen = !app.state.watchOpen;
+    app.render(false);
+  });
+  html.find('[data-action="spectate-switch"]').on("click", async (ev) => {
     const archId = ev.currentTarget.dataset.archId;
-    if (hasOp("session.spectate")) mutate("session.spectate", { userId: game.user.id, archId });
+    const followPid = ev.currentTarget.dataset.followPid;
+    if (!hasOp("session.spectate")) return;
+    const result = await mutate("session.spectate", { userId: game.user.id, archId, followPid });
+    if (result?.error) { ui.notifications.warn(loc(result.error)); return; }
+    if (result !== true) return;
+    app.state.watchOpen = false;
+    app.state.selection = "";
+    app.hovered = "";
+    app.render(false);
+  });
+  html.find('[data-action="spectate-leave"]').on("click", async (ev) => {
+    const session = getWorld("session") || {};
+    const pid = ev.currentTarget.dataset.pid;
+    const part = session.participants?.[pid];
+    if (part?.kind !== "spectator" || part.userId !== game.user.id) return;
+    const result = await mutate("session.disconnect", { pid });
+    if (result !== true) return;
+    app.state.watchOpen = false;
+    app.state.selection = "";
+    app.hovered = "";
+    app.render(false);
   });
 }

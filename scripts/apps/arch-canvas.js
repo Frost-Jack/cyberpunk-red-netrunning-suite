@@ -5,23 +5,26 @@
  * wireMapViewport) WITHOUT the chassis CSS-zoom correction — this app uses no
  * CSS `zoom`, so the screen↔local scale divisor is always 1. */
 
-import { MODULE_ID, FLOOR_ICONS, ENTITY_ICONS, loc, abbrFor } from "../constants.js";
-import { getWorld, mutate, isPlayerRunner } from "../data.js";
+import { MODULE_ID, FLOOR_ICONS, ENTITY_ICONS, loc, abbrFor, BLACK_ICE, blackIceTypeForName } from "../constants.js";
+import { getWorld, mutate, isPlayerRunner, programUsed, combatantMatchesActor } from "../data.js";
 import { getDeck, installedPrograms } from "../cpr-bridge.js";
+import { topology, visibleFloorIds } from "../topology.js";
+import { programHint, iceHint } from "../descriptions.js";
+import { mount3D, dispose3D } from "./architecture-3d.js";
 
-/** Spectator fog (SPEC §13): the deepest floor index any PLAYER runner on this
- *  arch can currently see — MAX over them of (maxFloor, reveal[pid][archId],
- *  floorIndex). -1 when no player runner is on the arch (nothing visible). */
-function playerRunnerVisibleMax(session, archId) {
-  let vis = -1;
-  const reveal = session.reveal || {};
+function tokenImage(actor, fallback = "icons/svg/mystery-man.svg") {
+  const src = actor?.token?.texture?.src || actor?.prototypeToken?.texture?.src;
+  return src && src !== "icons/svg/mystery-man.svg" ? src : actor?.img || fallback;
+}
+
+/** Spectators share the union of player runners' visible nodes on this tree. */
+function playerRunnerVisibility(session, arch) {
+  const visible = new Set();
   for (const [pid, p] of Object.entries(session.participants || {})) {
-    if (p.archId !== archId || !isPlayerRunner(p)) continue;
-    const visited = Number(p.maxFloor) || 0;
-    const revealed = reveal[pid]?.[archId];
-    vis = Math.max(vis, visited, Number.isInteger(revealed) ? revealed : -1, Number(p.floorIndex) || 0);
+    if (p.archId !== arch.id || !isPlayerRunner(p)) continue;
+    for (const id of visibleFloorIds(session, pid, arch)) visible.add(id);
   }
-  return vis;
+  return visible;
 }
 
 /* Floor width + gap must match the CSS so the "fit" camera can centre floor 0. */
@@ -70,6 +73,12 @@ function targetsFor(session, ref) {
   return out;
 }
 
+function visibleEntityRef(app, ref) {
+  return !!ref && (app._canvasVM?.nodes || []).some(node => !node.isFog
+    && [...(node.entities || []), ...(node.demonEntities || []), ...(node.participants || [])]
+      .some(entity => entity.ref === ref || entity.progMinis?.some(mini => mini.ref === ref)));
+}
+
 export function getData(app) {
   const { archId, role, me } = resolveDisplay(app);
   const archs = getWorld("netArchs") || {};
@@ -86,6 +95,8 @@ export function getData(app) {
       try { allowSpec = !!game.settings.get(MODULE_ID, "allowSpectators"); } catch (e) { /* noop */ }
       hint = allowSpec ? "CRNS.Canvas.EmptySpectator" : "CRNS.Canvas.EmptyNone";
     }
+    app._canvasVM = null;
+    app.hovered = "";
     return { canvas: { empty: true, emptyHint: hint } };
   }
 
@@ -93,6 +104,7 @@ export function getData(app) {
   const parts = session.participants || {};
   const selection = app.state.selection || "";
   const floors = arch.floors || [];
+  const graph = topology(arch);
   const lastIndex = floors.length - 1;
   const myRunnerPid = me?.kind === "runner" ? me.pid : "";
   const myFloor = me?.kind === "runner" ? (me.floorIndex || 0) : -1;
@@ -101,21 +113,19 @@ export function getData(app) {
   const attachments = session.attachments || [];
   const slid = session.slid || [];
   const progState = session.progState || {};
+  const current = game.combat?.started ? game.combat.combatant : null;
+  const hasTurn = actor => combatantMatchesActor(current, actor?.uuid, actor?.id);
 
-  // Fog of war (SPEC §14.7 + §13 spectators rework): player runners see only
-  // visited floors + revealed range; a SPECTATOR sees with the SAME fog as the
-  // player runner(s) in that arch (MAX over them of visited/revealed/floor). GM
-  // sees all floors. `visibleMax` = deepest visible index (-1 → all). A "???"
-  // stub renders after the last visible floor if more exist.
-  let visibleMax = lastIndex; // GM: everything.
+  // Keep fog per floor identity: an array prefix would reveal sibling branches.
+  let visibleIds = new Set(floors.map((f) => f.id));
   if (role === "runner" && !isGM) {
-    const visited = Number(me?.maxFloor) || 0;
-    const revealed = (session.reveal || {})[myRunnerPid]?.[archId];
-    visibleMax = Math.max(visited, Number.isInteger(revealed) ? revealed : -1);
-    visibleMax = Math.max(visibleMax, myFloor); // never hide the runner's own floor.
+    visibleIds = visibleFloorIds(session, myRunnerPid, arch);
   } else if (role === "spectator" && !isGM) {
-    // Union of every PLAYER runner's visibility on this arch.
-    visibleMax = playerRunnerVisibleMax(session, archId);
+    const followed = parts[me?.followPid];
+    visibleIds = me?.followPid
+      ? (followed?.archId === archId && isPlayerRunner(followed)
+        ? visibleFloorIds(session, me.followPid, arch) : new Set())
+      : playerRunnerVisibility(session, arch);
   }
   const fogActive = !isGM && (role === "runner" || role === "spectator");
   const runnersOnArch = isGM ? runnersOnArchList(session, archId) : [];
@@ -178,18 +188,22 @@ export function getData(app) {
       // A trap that has an attachment is CHASING the runner that triggered it —
       // it left "lying in wait" mode; swap the mine badge for a chase badge.
       const progKey = `${pid}|${prog.id}`;
-      const chaseAtt = ps?.mode === "trap"
-        ? attachments.find((a) => a.progKey === progKey) : null;
+      const chaseAtt = attachments.find((a) => a.archId === archId && a.progKey === progKey);
       const chasedPart = chaseAtt ? parts[chaseAtt.pid] : null;
       const chasedActor = chasedPart?.actorUuid ? (fromUuidSync?.(chasedPart.actorUuid) ?? null) : null;
+      const oldTarget = ps?.mode === "deployed" ? (ps.targetRef || "") : "";
+      const escaped = oldTarget.startsWith("runner:") && slid.some(s => s.archId === archId && s.progKey === progKey && `runner:${s.pid}` === oldTarget);
       (progChipsByFloor[renderIndex] = progChipsByFloor[renderIndex] || []).push({
         ref,
         isDemon: false,
         isProgram: true,
         actorId: progActor?.id || "",
         name: dispName,
+        isCurrentTurn: hasTurn(progActor),
+        used: programUsed(session, p, prog.id),
+        visual: (progActor?.flags?.[MODULE_ID]?.customContent || prog.flags?.[MODULE_ID]?.customContent)?.visual,
         code: abbrFor(dispName),
-        img: progActor?.img || ENTITY_ICONS[key] || actor?.img || "icons/svg/mystery-man.svg",
+        img: tokenImage(progActor, ENTITY_ICONS[key] || actor?.img),
         rez, rezMax,
         rezPct: rezMax > 0 ? Math.round((rez / rezMax) * 100) : 0,
         derezzed: rez <= 0,
@@ -202,8 +216,8 @@ export function getData(app) {
         gmDraggable: game.user.isGM,
         isTrap: ps?.mode === "trap",
         isDeployed: ps?.mode === "deployed",
-        targetRef: ps?.mode === "deployed" ? (ps.targetRef || "") : "",
-        tip: `${dispName} · blackice${rezMax > 0 ? ` · REZ ${rez}/${rezMax}` : ""}`,
+        targetRef: chaseAtt ? `runner:${chaseAtt.pid}` : escaped ? "" : oldTarget,
+        tip: iceHint(blackIceTypeForName(dispName), dispName, progActor?.system?.stats || prog.system),
       });
     }
   }
@@ -231,6 +245,10 @@ export function getData(app) {
       out.push({
         ref,
         name: prog.name,
+        used: programUsed(session, parts[pid], prog.id),
+        visual: prog.flags?.[MODULE_ID]?.customContent?.visual,
+        img: prog.img || actor?.img || "icons/svg/mystery-man.svg",
+        tip: programHint(prog),
         code: abbrFor(prog.name),
         cls,
         icon: progMiniIcon(cls),
@@ -261,7 +279,7 @@ export function getData(app) {
         const rp = parts[att.pid];
         const rActor = rp?.actorUuid ? (fromUuidSync?.(rp.actorUuid) ?? null) : null;
         const rName = rActor?.name || loc("CRNS.Runners.NPC");
-        tether = { color: userChrome(rp?.userId).color, title: loc("CRNS.Canvas.AttachedTo", { name: rName }) };
+        tether = { pid: att.pid, color: userChrome(rp?.userId).color, title: loc("CRNS.Canvas.AttachedTo", { name: rName }) };
       }
     }
     // Slid badge (SPEC §14.7): a crossed-eye visible to the runner who slid + GM.
@@ -276,7 +294,13 @@ export function getData(app) {
       isDemon,
       actorId: def.actorId || "",
       name: actor?.name || def.type,
-      img: actor?.img || "icons/svg/mystery-man.svg",
+      isCurrentTurn: hasTurn(actor),
+      visual: actor?.flags?.[MODULE_ID]?.customContent?.visual,
+      color: ownerBadge({}, null).color,
+      targetRef: isDemon && selection === ref ? (session.targets?.[game.user.id] || "") : "",
+      img: tokenImage(actor),
+      tip: isDemon ? `${actor?.name || def.type}\nREZ ${rez}/${rezMax}`
+        : iceHint(def.type, actor?.name || def.type, actor?.system?.stats || BLACK_ICE[def.type]),
       rez, rezMax,
       rezPct: rezMax > 0 ? Math.round((rez / rezMax) * 100) : 0,
       derezzed,
@@ -358,10 +382,11 @@ export function getData(app) {
     });
 
   const floorVMs = floors.map((floor, index) => {
-    const isRoot = index === lastIndex;
+    const isRoot = index === graph.rootIndex;
     const entities = [];
+    const demonEntities = [];
     for (const ice of floor.ice || []) entities.push(buildEntity(ice, "ice", floor, false));
-    if (floor.demon) entities.push(buildEntity(floor.demon, "demon", floor, true));
+    if (floor.demon) demonEntities.push(buildEntity(floor.demon, "demon", floor, true));
 
     // Runner participants standing on this floor of this arch.
     const participants = [];
@@ -374,9 +399,14 @@ export function getData(app) {
       const isMine = myRunnerPid === pid;
       participants.push({
         pid, ref,
+        actorId: actor?.id || "",
+        selectable: canSelect(ref, myRunnerPid),
         name: actor?.name || loc("CRNS.Runners.NPC"),
-        img: actor?.img || "icons/svg/mystery-man.svg",
-        color: userChrome(p.userId).color,
+        isCurrentTurn: combatantMatchesActor(current, p.actorUuid, actor?.id),
+        img: tokenImage(actor),
+        color: ownerBadge(p, actor).color,
+        targetRef: game.user.isGM && (selection === ref || selection.startsWith(`prog:${pid}:`))
+          ? (session.targets?.[game.user.id] || "") : p.userId ? (session.targets?.[p.userId] || "") : "",
         isMine,
         selected: selection === ref,
         gmDraggable: game.user.isGM,
@@ -394,7 +424,8 @@ export function getData(app) {
       : loc(`CRNS.Floor.${floor.kind}`);
 
     // A runner may "move here" to an adjacent floor.
-    const showMoveHere = myFloor >= 0 && Math.abs(index - myFloor) === 1;
+    const showMoveHere = myFloor >= 0
+      && (graph.parents[myFloor] === index || graph.parents[index] === myFloor);
 
     const markers = floorMarkers(floor);
     return {
@@ -410,6 +441,10 @@ export function getData(app) {
       description: isGM ? (floor.description || "") : "",
       floorId: floor.id,
       entities,
+      demonEntities,
+      parentId: floors[graph.parents[index]]?.id || "",
+      isBranched: graph.branched,
+      hasNext: graph.children[index]?.length > 0,
       participants,
       showMoveHere,
       markers,
@@ -426,36 +461,54 @@ export function getData(app) {
     };
   });
 
-  // Fog of war (SPEC §14.7): keep only visible floors; append a "???" stub when
-  // deeper floors exist beyond the last visible one.
-  let visibleFloors = floorVMs;
-  let fogStub = false;
-  let fogStubMove = false;
-  let fogStubIndex = -1;
+  const visibleFloors = (fogActive ? floorVMs.filter((f) => visibleIds.has(f.floorId)) : floorVMs)
+    .sort((a, b) => graph.depths[a.index] - graph.depths[b.index] || a.index - b.index);
+  // Each visible fork has its own frontier. Never reveal another branch merely
+  // because its floors precede a visited floor in the editor's array.
+  const fogNodes = [];
   if (fogActive) {
-    visibleFloors = floorVMs.filter((f) => f.index <= visibleMax);
-    fogStub = visibleMax < lastIndex;
-    // The fog stub is reachable when it directly follows the runner's CURRENT
-    // floor (next deeper index === myFloor + 1). The server-side session.move
-    // gate still enforces the ±1 step + un-breached-password rules (Addendum 3).
-    if (fogStub && myFloor >= 0 && visibleMax === myFloor && myFloor + 1 <= lastIndex) {
-      fogStubMove = true;
-      fogStubIndex = myFloor + 1;
+    for (let index = 0; index < floors.length; index++) {
+      const parent = graph.parents[index];
+      if (visibleIds.has(floors[index].id) || parent === null || parent === undefined) continue;
+      if (!visibleIds.has(floors[parent].id)) continue;
+      fogNodes.push({ index, floorId: floors[index].id, parentId: floors[parent].id,
+        isFog: true, showMoveHere: myFloor === parent, isBranched: graph.branched });
     }
   }
+  // Grid columns are derived only from visible nodes/frontiers, not secret
+  // descendants, so empty space doesn't disclose hidden branch lengths.
+  const shown = new Map([...visibleFloors, ...fogNodes].map((f) => [f.index, f]));
+  let column = 1;
+  const place = (index) => {
+    const node = shown.get(index);
+    if (!node) return;
+    const children = (graph.children[index] || []).filter((i) => shown.has(i));
+    children.forEach(place);
+    node.column = children.length ? shown.get(children[0]).column : column++;
+    node.row = (graph.depths[index] || 0) + 1;
+  };
+  for (const index of shown.keys()) {
+    if (graph.parents[index] === null || !shown.has(graph.parents[index])) place(index);
+  }
 
-  return {
-    canvas: {
+  const canvasVM = {
       empty: false,
       archId,
+      currentTurnName: visibleFloors.flatMap(f => [...f.entities, ...f.demonEntities, ...f.participants]).find(e => e.isCurrentTurn)?.name || "",
       floors: visibleFloors,
-      fogStub,
-      fogStubMove,
-      fogStubIndex,
+      nodes: [...visibleFloors, ...fogNodes]
+        .sort((a, b) => graph.depths[a.index] - graph.depths[b.index] || a.index - b.index),
+      fogNodes,
+      branched: graph.branched,
+      columns: Math.max(1, column - 1),
+      view3d: !!app.state.view3d,
+      isGM,
       cloakStrip,
       hasCloaks: cloakStrip.length > 0,
-    },
   };
+  app._canvasVM = canvasVM;
+  if (app.hovered && !visibleEntityRef(app, app.hovered)) app.hovered = "";
+  return { canvas: canvasVM };
 }
 
 /** Runner participants on an arch (for the GM control-set select). Built once. */
@@ -495,7 +548,9 @@ function zoomAt(cam, stage, factor, ax = 0, ay = 0) {
  *  floor 0 into view. */
 function fitCam(cam, viewport, stage) {
   cam.z = 1;
-  cam.x = 0;
+  const entry = stage.querySelector('.crns-floor-wrap[data-parent-id=""]');
+  cam.x = stage.classList.contains("branched") && entry
+    ? stage.offsetWidth / 2 - (entry.offsetLeft + entry.offsetWidth / 2) : 0;
   const vh = viewport?.clientHeight || 0;
   const sh = stage?.scrollHeight || 0;
   cam.y = Math.max(0, sh / 2 - vh / 2 + 40);
@@ -504,9 +559,18 @@ function fitCam(cam, viewport, stage) {
 
 function wireViewport(app, cam, viewport, stage) {
   if (!viewport || !stage) return;
+  const abort = new AbortController();
+  let drag = null;
+  const listen = (type, fn, options = {}) => viewport.addEventListener(type, fn, { ...options, signal: abort.signal });
+  app._disposeCanvasViewport = () => {
+    abort.abort();
+    if (drag && viewport.hasPointerCapture(drag.id)) viewport.releasePointerCapture(drag.id);
+    drag = null;
+    app._disposeCanvasViewport = null;
+  };
   applyTransform(cam, stage);
 
-  viewport.addEventListener("wheel", (ev) => {
+  listen("wheel", (ev) => {
     ev.preventDefault();
     const factor = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
     const rect = viewport.getBoundingClientRect();
@@ -515,33 +579,47 @@ function wireViewport(app, cam, viewport, stage) {
     zoomAt(cam, stage, factor, ax, ay);
   }, { passive: false });
 
-  viewport.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    // Don't start a pan when grabbing a chip / button / runner token.
-    if (ev.target.closest(".crns-chip, .crns-runner-chip, .crns-prog-mini, button, .crns-zoom-overlay")) return;
+  listen("pointerdown", (ev) => {
+    app._suppressCanvasContext = false;
+    if (ev.button !== 0 && ev.button !== 2) return;
+    // Don't start a pan when grabbing a chip / button / runner token / action.
+    if (ev.button === 0 && ev.target.closest(".crns-chip, .crns-runner-chip, .crns-prog-mini, button, .crns-zoom-overlay, [data-action]")) return;
     ev.preventDefault();
-    const startX = ev.clientX, startY = ev.clientY;
-    const baseX = cam.x || 0, baseY = cam.y || 0;
-    let moved = false;
-    const move = (e) => {
-      const dx = e.clientX - startX, dy = e.clientY - startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-      cam.x = baseX + dx;
-      cam.y = baseY + dy;
-      applyTransform(cam, stage);
-    };
-    const up = (e) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, baseX: cam.x || 0, baseY: cam.y || 0,
+      moved: false, right: ev.button === 2, ref: ev.target.closest("[data-entity-ref]")?.dataset.entityRef };
+    viewport.setPointerCapture(ev.pointerId);
+  });
+  listen("pointermove", (ev) => {
+    if (!drag || drag.id !== ev.pointerId) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) <= 4) return;
+    drag.moved = true;
+    cam.x = drag.baseX + dx; cam.y = drag.baseY + dy;
+    applyTransform(cam, stage);
+  });
+  const up = (ev) => {
+    if (!drag) return;
+    const ended = drag;
+    drag = null;
+    if (viewport.hasPointerCapture(ended.id)) viewport.releasePointerCapture(ended.id);
+    if (ended.right) {
+      app._suppressCanvasContext = true;
+      if (ev.type === "pointerup" && !ended.moved && ended.ref) app.onTarget?.(ended.ref);
+    } else if (ev.type === "pointerup") {
       // A click on empty stage (no drag) clears the local selection.
-      if (!moved && app.state.selection) {
+      if (!ended.moved && app.state.selection) {
         app.state.selection = "";
         app.render(false);
       }
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  });
+    }
+  };
+  listen("pointerup", up);
+  listen("pointercancel", up);
+  listen("lostpointercapture", up);
+  listen("contextmenu", (ev) => {
+    ev.preventDefault();
+    if (drag?.right || app._suppressCanvasContext) ev.stopPropagation();
+  }, { capture: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -599,7 +677,9 @@ function startRain(app, canvas, viewport) {
 }
 
 /** Stop the rain loop + observer. Safe to call repeatedly. */
-export function stopRain(app) {
+export function stopRain(app, disposeView = true) {
+  app._disposeCanvasViewport?.();
+  if (disposeView) dispose3D(app);
   if (app._rainRaf) { cancelAnimationFrame(app._rainRaf); app._rainRaf = null; }
   if (app._rainRO) { try { app._rainRO.disconnect(); } catch (e) { /* noop */ } app._rainRO = null; }
 }
@@ -610,11 +690,71 @@ export function stopRain(app) {
 
 export function activateListeners(app, html) {
   // A fresh render replaces the canvas element — always tear the old loop down.
-  stopRain(app);
+  stopRain(app, false);
+  app.onTarget = ref => { if (visibleEntityRef(app, ref)) return mutate("session.setTarget", { entityRef: ref }); };
 
   const viewport = html.find(".crns-viewport")[0];
+  if (!viewport) { dispose3D(app); return; }
+  html.find('[data-action="view-toggle"]').on("click", async () => {
+    app.state.view3d = !app.state.view3d;
+    await game.user.setFlag(MODULE_ID, "view3d", app.state.view3d);
+    app.render(false);
+  });
+  if (game.user.isGM) {
+    html.find('[data-action="fx-clear-cloak"]').on("click", (ev) => {
+      ev.stopPropagation();
+      mutate("fx.clear", { archId: app._canvasVM?.archId, kind: "cloak", id: ev.currentTarget.dataset.cloakId });
+    });
+  }
+  if (app.state.view3d && app._canvasVM) {
+    const nodes = app._canvasVM.nodes || [];
+    const entities = nodes.filter((n) => !n.isFog).flatMap((n) => [...(n.entities || []), ...(n.demonEntities || []), ...(n.participants || [])]);
+    mount3D(app, html.find(".crns-3d-host")[0], app._canvasVM, {
+      labels: Object.fromEntries(["view", "unavailable", "reset", "zoomIn", "zoomOut", "orbitLeft", "orbitRight", "move", "fog", "demon", "empty", "selected", "target", "link", "trap", "deployed", "chase", "slid", "breached", "help", "turn", "used", "usedHint"].map(key => [key, loc(`CRNS.View.${key}`)])),
+      onSelect: (ref) => {
+        const me = app.myParticipant();
+        if (!visibleEntityRef(app, ref)
+          || !canSelect(ref, me?.kind === "runner" ? me.pid : "")) return;
+        app.state.selection = app.state.selection === ref ? "" : ref;
+        app.render(false);
+      },
+      onTarget: ref => app.onTarget(ref),
+      onMove: async (index) => {
+        const me = app.myParticipant();
+        const selected = entities.find((entity) => entity.ref === app.state.selection);
+        if (game.user.isGM && selected && !selected.ref.startsWith("runner:")) {
+          let result;
+          if (selected.ref.startsWith("prog:")) {
+            const rest = selected.ref.slice(5), cut = rest.lastIndexOf(":");
+            result = await mutate("run.progFloor", { pid: rest.slice(0, cut), programId: rest.slice(cut + 1), floorIndex: index });
+          } else {
+            const [, archId, , entId] = selected.ref.split(":");
+            result = await mutate("ent.move", { archId, entId, toFloorIndex: index });
+          }
+          if (result?.error) ui.notifications.warn(loc(result.error));
+          return;
+        }
+        const pid = game.user.isGM && app.state.selection?.startsWith("runner:")
+          ? app.state.selection.slice(7) : me?.kind === "runner" ? me.pid : "";
+        if (!pid) return;
+        const result = await mutate("session.move", { pid, floorIndex: index });
+        if (result?.error) ui.notifications.warn(loc(result.error));
+      },
+      onInspect: (ref) => {
+        if (!game.user.isGM) return;
+        const entity = entities.find((e) => e.ref === ref);
+        const owner = entities.find((e) => e.progMinis?.some((mini) => mini.ref === ref));
+        const actorId = entity?.actorId || owner?.actorId;
+        const actor = actorId ? game.actors.get(actorId) : null;
+        actor?.sheet?.render(true);
+      },
+    });
+    ensureNodePulseHook();
+    return;
+  }
+  dispose3D(app);
   const stage = html.find(".crns-stage")[0];
-  if (!viewport || !stage) return;
+  if (!stage) return;
 
   const { archId } = resolveDisplay(app);
   app.state.cam = app.state.cam || {};
@@ -647,14 +787,15 @@ export function activateListeners(app, html) {
   chips.on("click", (ev) => {
     ev.stopPropagation();
     const ref = ev.currentTarget.dataset.entityRef;
-    if (!ref) return;
+    if (!visibleEntityRef(app, ref)) return;
     if (!canSelect(ref, myRunnerPid)) return;
     app.state.selection = app.state.selection === ref ? "" : ref;
     app.render(false);
   });
 
   chips.on("mouseenter", (ev) => {
-    app.hovered = ev.currentTarget.dataset.entityRef || "";
+    const ref = ev.currentTarget.dataset.entityRef;
+    app.hovered = visibleEntityRef(app, ref) ? ref : "";
     // Arm the T targeting key on hover alone: if focus is on the page body or
     // has drifted outside this app window, pull it back onto the .crns-root
     // WITHOUT scrolling — so hovering a chip is enough to target, but we never
@@ -672,7 +813,7 @@ export function activateListeners(app, html) {
     ev.preventDefault();
     ev.stopPropagation();
     const ref = ev.currentTarget.dataset.entityRef;
-    if (ref) mutate("session.setTarget", { entityRef: ref });
+    app.onTarget(ref);
   });
 
   // GM: double-click a backing-actor chip opens its native sheet.
@@ -762,11 +903,6 @@ export function activateListeners(app, html) {
       const el = ev.currentTarget;
       mutate("fx.clear", { archId, floorId: el.dataset.floorId, kind: el.dataset.kind, id: el.dataset.id });
     });
-    // ✕ an arch-level cloak marker (no floorId; Addendum 6).
-    html.find('[data-action="fx-clear-cloak"]').on("click", (ev) => {
-      ev.stopPropagation();
-      mutate("fx.clear", { archId, kind: "cloak", id: ev.currentTarget.dataset.cloakId });
-    });
     // Remove an eyedee accessor.
     html.find('[data-action="fx-clear-eyedee"]').on("click", (ev) => {
       ev.stopPropagation();
@@ -801,8 +937,32 @@ export function activateListeners(app, html) {
 
   // Deployed Black-ICE target lines + one-time nodePulse listener. Defer the
   // line draw one frame so the stage has laid out (chip rects are known).
-  requestAnimationFrame(() => drawDeployLines(app, html));
+  requestAnimationFrame(() => { drawBranchLines(app, html); drawDeployLines(app, html); });
   ensureNodePulseHook();
+}
+
+function drawBranchLines(app, html) {
+  const stage = html.find(".crns-stage.branched")[0];
+  const svg = html.find(".crns-branch-lines")[0];
+  if (!stage || !svg) return;
+  const rect = stage.getBoundingClientRect();
+  const z = app.state.cam?.[resolveDisplay(app).archId]?.z || 1;
+  const nodes = new Map([...stage.querySelectorAll("[data-node-id]")].map((el) => [el.dataset.nodeId, el]));
+  svg.replaceChildren();
+  for (const el of nodes.values()) {
+    const parent = nodes.get(el.dataset.parentId);
+    if (!parent) continue;
+    const a = parent.querySelector(".crns-floor").getBoundingClientRect();
+    const b = el.querySelector(".crns-floor").getBoundingClientRect();
+    const x1 = (a.left + a.width / 2 - rect.left) / z;
+    const y1 = (a.bottom - rect.top) / z;
+    const x2 = (b.left + b.width / 2 - rect.left) / z;
+    const y2 = (b.top - rect.top) / z;
+    const mid = (y1 + y2) / 2;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M${x1},${y1} V${mid} H${x2} V${y2}`);
+    svg.appendChild(path);
+  }
 }
 
 /* ------------------------------------------------------------------ */

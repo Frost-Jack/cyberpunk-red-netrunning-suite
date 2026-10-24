@@ -6,11 +6,29 @@
     <div class="crns-canvas-empty-hint">{{localize canvas.emptyHint}}</div>
   </div>
   {{else}}
+  <button type="button" class="crns-view-toggle crns-icon-btn" data-action="view-toggle" title="{{localize "CRNS.View.Toggle"}}">{{#if canvas.view3d}}2D{{else}}3D{{/if}}</button>
+  {{#if canvas.currentTurnName}}<div class="crns-current-turn-label" role="status" title="{{canvas.currentTurnName}}"><i class="fas fa-play"></i> {{localize "CRNS.View.turn"}}: {{canvas.currentTurnName}}</div>{{/if}}
+  {{#if canvas.view3d}}
+  <div class="crns-3d-host"></div>
+  {{else}}
   <canvas class="crns-rain"></canvas>
-  <div class="crns-stage">
+  <div class="crns-stage{{#if canvas.branched}} branched{{/if}}"{{#if canvas.branched}} style="--branch-columns:{{canvas.columns}}"{{/if}}>
+    {{#if canvas.branched}}<svg class="crns-branch-lines" aria-hidden="true"></svg>{{/if}}
     <svg class="crns-lines" preserveAspectRatio="none"></svg>
-    {{#each canvas.floors as |floor|}}
-    <div class="crns-floor-wrap" data-floor-index="{{floor.index}}">
+    {{#each canvas.nodes as |floor|}}
+    <div class="crns-floor-wrap{{#if floor.isFog}} crns-fog-wrap{{/if}}" data-floor-index="{{floor.index}}" data-node-id="{{floor.floorId}}" data-parent-id="{{floor.parentId}}"{{#if floor.isBranched}} style="grid-row:{{floor.row}};grid-column:{{floor.column}}"{{/if}}>
+      {{#if floor.isFog}}
+      <div class="crns-floor crns-fog-stub" title="{{localize "CRNS.Canvas.MoreFloors"}}">
+        <div class="crns-fog-glitch">???</div>
+        <div class="crns-fog-hint">{{localize "CRNS.Canvas.MoreFloors"}}</div>
+        {{#if floor.showMoveHere}}
+        <button type="button" class="crns-move-here crns-fog-move" data-action="floor-move-here"
+                data-floor-index="{{floor.index}}" title="{{localize "CRNS.Canvas.Advance"}}">
+          <i class="fas fa-arrow-down-to-line"></i> {{localize "CRNS.Canvas.Advance"}}
+        </button>
+        {{/if}}
+      </div>
+      {{else}}
       <div class="crns-floor{{#if floor.isRoot}} root{{/if}}{{#if floor.controlChip}} controlled{{/if}}" data-floor-index="{{floor.index}}"
            data-floor-id="{{floor.floorId}}"{{#if floor.controlColor}} style="--control-color:{{floor.controlColor}}"{{/if}}
            {{#if floor.description}}title="{{floor.description}}"{{/if}}>
@@ -88,20 +106,22 @@
         <div class="crns-floor-runners">
           {{#each floor.participants as |p|}}
           <div class="crns-runner-slot">
-            <div class="crns-runner-chip{{#if p.isMine}} mine{{/if}}{{#if p.selected}} selected{{/if}}"
+            <div class="crns-runner-chip{{#if p.isCurrentTurn}} crns-current-turn{{/if}}{{#if p.isMine}} mine{{/if}}{{#if p.selected}} selected{{/if}}"
                  data-entity-ref="{{p.ref}}" data-pid="{{p.pid}}"
                  {{#if p.gmDraggable}}draggable="true"{{/if}}
                  style="--runner-color:{{p.color}}" title="{{p.name}}">
               <img src="{{p.img}}" alt="{{p.name}}" />
               <span class="crns-runner-name">{{p.name}}</span>
+              {{#if p.isCurrentTurn}}<span class="crns-turn-badge"><i class="fas fa-play"></i> {{localize "CRNS.View.turn"}}</span>{{/if}}
             </div>
             {{#if p.progMinis.length}}
             <div class="crns-prog-minis">
               {{#each p.progMinis as |mp|}}
-              <span class="crns-prog-mini crns-prog-{{mp.cls}}{{#if mp.derezzed}} derezzed{{/if}}{{#if mp.selected}} selected{{/if}}{{#if mp.selectable}} selectable{{/if}}"
-                    data-entity-ref="{{mp.ref}}" title="{{mp.name}}">
+              <span class="crns-prog-mini crns-prog-{{mp.cls}}{{#if mp.used}} crns-program-used{{/if}}{{#if mp.derezzed}} derezzed{{/if}}{{#if mp.selected}} selected{{/if}}{{#if mp.selectable}} selectable{{/if}}"
+                    data-entity-ref="{{mp.ref}}" data-net-tooltip="{{mp.tip}}" title="{{mp.name}}">
                 <span class="crns-prog-mini-code">{{mp.code}}</span>
                 <i class="fas {{mp.icon}}"></i>
+                {{#if mp.used}}<span class="crns-used-badge" title="{{localize "CRNS.View.usedHint"}}"><i class="fas fa-check"></i></span>{{/if}}
                 {{#if mp.hasRez}}<span class="crns-prog-mini-rez">{{mp.rez}}</span>{{/if}}
                 {{#if mp.targets.length}}
                 <span class="crns-prog-mini-targets">
@@ -124,34 +144,29 @@
         {{/if}}
       </div>
 
-      {{#unless floor.isRoot}}
+      {{/if}}
+      {{#if floor.demonEntities.length}}
+      <section class="crns-floor-demons" aria-label="{{localize "CRNS.Canvas.Demons"}}">
+        <div class="crns-floor-demons-title"><i class="fas fa-hat-wizard"></i> {{localize "CRNS.Canvas.Demons"}}</div>
+        {{#each floor.demonEntities as |ent|}}
+        {{> "modules/cyberpunk-red-netrunning-suite/templates/entity-card.hbs" ent=ent}}
+        {{/each}}
+      </section>
+      {{/if}}
+      {{#unless floor.isBranched}}
+      {{#if floor.hasNext}}
       <div class="crns-link">
         <div class="crns-link-spine"></div>
         <div class="crns-link-flow"></div>
         <div class="crns-link-packet"></div>
       </div>
+      {{/if}}
       {{/unless}}
     </div>
     {{/each}}
 
-    {{#if canvas.fogStub}}
-    <div class="crns-floor-wrap crns-fog-wrap">
-      <div class="crns-link crns-link-fog">
-        <div class="crns-link-spine"></div>
-      </div>
-      <div class="crns-floor crns-fog-stub" title="{{localize "CRNS.Canvas.MoreFloors"}}">
-        <div class="crns-fog-glitch">???</div>
-        <div class="crns-fog-hint">{{localize "CRNS.Canvas.MoreFloors"}}</div>
-        {{#if canvas.fogStubMove}}
-        <button type="button" class="crns-move-here crns-fog-move" data-action="floor-move-here"
-                data-floor-index="{{canvas.fogStubIndex}}" title="{{localize "CRNS.Canvas.Advance"}}">
-          <i class="fas fa-arrow-down-to-line"></i> {{localize "CRNS.Canvas.Advance"}}
-        </button>
-        {{/if}}
-      </div>
-    </div>
-    {{/if}}
   </div>
+  {{/if}}
 
   {{!-- Arch-level cloak strip (Addendum 6): fixed overlay at the top of the
         viewport (not pan/zoomed). GM sees all cloaks + can ✕; a player sees only
@@ -166,10 +181,12 @@
   </div>
   {{/if}}
 
+  {{#unless canvas.view3d}}
   <div class="crns-zoom-overlay">
     <button type="button" class="crns-icon-btn" data-action="cam-zoom-in" title="{{localize "CRNS.Canvas.ZoomIn"}}"><i class="fas fa-plus"></i></button>
     <button type="button" class="crns-icon-btn" data-action="cam-zoom-out" title="{{localize "CRNS.Canvas.ZoomOut"}}"><i class="fas fa-minus"></i></button>
     <button type="button" class="crns-icon-btn" data-action="cam-reset" title="{{localize "CRNS.Canvas.ZoomReset"}}"><i class="fas fa-crosshairs"></i></button>
   </div>
+  {{/unless}}
   {{/if}}
 {{/if}}
